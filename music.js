@@ -73,6 +73,10 @@ function getSession(guildId) {
         setImmediate(() => playNext(guildId).catch(nextError =>
           console.error("เล่นเพลงถัดไปไม่สำเร็จ:", nextError.message)
         ));
+      } else {
+        setPermanentVoiceMute(guildId, true).catch(muteError =>
+          console.error("ปิดไมค์หลังเพลงขัดข้องไม่สำเร็จ:", muteError.message)
+        );
       }
     });
 
