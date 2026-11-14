@@ -564,6 +564,24 @@ client.on(Events.GuildMemberUpdate, async (_oldMember, newMember) => {
 });
 
 client.on(Events.GuildMemberRemove, async (member) => {
+  const queued = await removeFromQueue(member.guild.id, member.id);
+  if (queued) {
+    await queued.interaction.editReply({
+      content: "การค้นหาถูกยกเลิก เพราะสมาชิกออกจากเซิร์ฟเวอร์ครับ",
+      components: []
+    }).catch(() => {});
+  }
+
+  for (const [channelId, match] of activeMatches.entries()) {
+    if (match.guildId === member.guild.id && match.userIds.includes(member.id)) {
+      await endMatch(
+        channelId,
+        "💛 อีกฝ่ายออกจากเซิร์ฟเวอร์ การจับคู่ ON KING SWEET MATCH จึงสิ้นสุดลงครับ",
+        member.id
+      );
+    }
+  }
+
   if (!syncSecret) return;
   const payload = memberToPayload(member);
   payload.is_in_guild = false;
