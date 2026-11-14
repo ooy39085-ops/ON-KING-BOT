@@ -188,27 +188,22 @@ async function restoreActiveMatches(guild) {
   if (!category || category.type !== ChannelType.GuildCategory) return;
 
   for (const channel of category.children.cache.values()) {
-    if (channel.type !== ChannelType.GuildVoice || !channel.name.startsWith("sweet-")) continue;
-    const channelMatch = channel.name.match(/^sweet-(\\d{15,25})-(\\d{15,25})$/);
-    if (!channelMatch) continue;
-    const ids = [channelMatch[1], channelMatch[2]];
+    if (channel.type !== ChannelType.GuildVoice || !channel.name.startsWith("💗・")) continue;
+    const ids = [...channel.members.keys()];
 
-    if (channel.members.size === 0) {
-      await channel.delete("ล้างห้อง Sweet Match ที่ไม่มีสมาชิกหลังบอทเริ่มทำงาน").catch(() => {});
+    if (ids.length !== 2) {
+      if (ids.length === 1) {
+        try {
+          const remaining = await client.users.fetch(ids[0]);
+          await remaining.send("💛 อีกฝ่ายออกจากห้องระหว่างที่บอทหยุดทำงาน การจับคู่ ON KING SWEET MATCH จึงสิ้นสุดลงครับ");
+        } catch {}
+      }
+      await channel.delete("ล้างห้อง Sweet Match ที่ไม่ครบสองสมาชิกหลังบอทเริ่มทำงาน").catch(() => {});
       continue;
     }
 
     activeMatches.set(channel.id, { guildId: guild.id, userIds: ids, ended: false });
     for (const id of ids) activeUsers.set(id, channel.id);
-
-    const missingId = ids.find(id => !channel.members.has(id));
-    if (missingId) {
-      await endMatch(
-        channel.id,
-        "💛 อีกฝ่ายออกจากห้องระหว่างที่บอทหยุดทำงาน การจับคู่จึงสิ้นสุดลงครับ",
-        missingId
-      );
-    }
   }
 }
 
@@ -305,8 +300,16 @@ async function tryMatch(guild, newEntry) {
 
   let voiceChannel;
   try {
+    const safeChannelPart = (value) => String(value || "member")
+      .normalize("NFKC")
+      .replace(/[^\\p{L}\\p{N}_ -]/gu, "")
+      .trim()
+      .replace(/\\s+/g, "-")
+      .slice(0, 35) || "member";
+    const firstRoomName = safeChannelPart(firstMember.displayName || firstMember.user.username);
+    const secondRoomName = safeChannelPart(secondMember.displayName || secondMember.user.username);
     voiceChannel = await guild.channels.create({
-      name: `sweet-${current.userId}-${partner.userId}`,
+      name: `💗・${firstRoomName} ♡ ${secondRoomName}`.slice(0, 100),
       type: ChannelType.GuildVoice,
       parent: category.id,
       userLimit: 2,
