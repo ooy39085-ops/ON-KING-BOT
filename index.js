@@ -141,12 +141,13 @@ async function restoreActiveMatches(guild) {
   if (!category || category.type !== ChannelType.GuildCategory) return;
 
   for (const channel of category.children.cache.values()) {
-    if (channel.type !== ChannelType.GuildVoice || !channel.topic?.startsWith("ONKING_SWEET_MATCH:")) continue;
-    const ids = channel.topic.split(":").slice(1);
-    if (ids.length !== 2 || ids.some(id => !/^\\d{15,25}$/.test(id))) {
+    if (channel.type !== ChannelType.GuildVoice || !channel.name.startsWith("sweet-")) continue;
+    const channelMatch = channel.name.match(/^sweet-(\\d{15,25})-(\\d{15,25})$/);
+    if (!channelMatch) {
       await channel.delete("ล้างห้อง Sweet Match ที่มีข้อมูลไม่ถูกต้อง").catch(() => {});
       continue;
     }
+    const ids = [channelMatch[1], channelMatch[2]];
 
     if (channel.members.size === 0) {
       await channel.delete("ล้างห้อง Sweet Match ที่ไม่มีสมาชิกหลังบอทเริ่มทำงาน").catch(() => {});
@@ -261,10 +262,9 @@ async function tryMatch(guild, newEntry) {
   let voiceChannel;
   try {
     voiceChannel = await guild.channels.create({
-      name: `sweet-${current.userId.slice(-4)}-${partner.userId.slice(-4)}`,
+      name: `sweet-${current.userId}-${partner.userId}`,
       type: ChannelType.GuildVoice,
       parent: category.id,
-      topic: `ONKING_SWEET_MATCH:${current.userId}:${partner.userId}`,
       userLimit: 2,
       permissionOverwrites: [
         {
