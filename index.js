@@ -548,6 +548,12 @@ const commands = [
     )
     .toJSON(),
   new SlashCommandBuilder()
+    .setName("checkcouple")
+    .setNameLocalizations({ th: "เช็คคู่รัก" })
+    .setDescription("ตรวจสอบคู่รักและวันเริ่มต้นความสัมพันธ์")
+    .addUserOption(o => o.setName("member").setNameLocalizations({ th: "สมาชิก" }).setDescription("สมาชิกที่ต้องการตรวจสอบ").setRequired(true))
+    .toJSON(),
+  new SlashCommandBuilder()
     .setName("cupid")
     .setDescription("ระบบขอเป็นแฟนและการ์ดคู่รัก ON KING CUPID")
     .addSubcommand(s => s.setName("setup").setDescription("ตั้งค่าห้องขอเป็นแฟนและห้องการ์ดคู่รัก")
@@ -756,6 +762,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply(
           `🏓 Pong! ON KING BOT ทำงานปกติ\nWebSocket Latency: ${latency} ms`
         );
+        return;
+      }
+
+      if (interaction.commandName === "checkcouple" || interaction.commandName === "เช็คคู่รัก") {
+        const target = interaction.options.getUser("member", true);
+        const couple = findCupidCouple(interaction.guildId, target.id);
+        if (!couple) {
+          await interaction.reply({
+            content: `💛 <@${target.id}> ยังไม่มีคู่รักในระบบ ON KING CUPID ครับ`,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const partnerId = couple.user1 === target.id ? couple.user2 : couple.user1;
+        const targetMember = await interaction.guild.members.fetch(target.id).catch(() => null);
+        const partnerMember = await interaction.guild.members.fetch(partnerId).catch(() => null);
+        const targetName = targetMember?.displayName || target.username;
+        const partnerName = partnerMember?.displayName || (await client.users.fetch(partnerId).catch(() => null))?.username || "สมาชิก ON KING";
+        const embed = new EmbedBuilder()
+          .setColor(0xD4AF37)
+          .setTitle("💍 ON KING CUPID • ตรวจสอบคู่รัก")
+          .setDescription(`**${targetName}** ♡ **${partnerName}**`)
+          .addFields(
+            { name: "สมาชิกที่ค้นหา", value: `<@${target.id}>`, inline: true },
+            { name: "คู่รัก", value: `<@${partnerId}>`, inline: true },
+            { name: "วันแต่งงาน", value: cupidDate(couple.createdAt), inline: false }
+          )
+          .setFooter({ text: "ON KING COMMUNITY • LOVE IN THE KINGDOM" })
+          .setTimestamp(couple.createdAt);
+
+        await interaction.reply({ embeds: [embed], ephemeral: false });
         return;
       }
 
