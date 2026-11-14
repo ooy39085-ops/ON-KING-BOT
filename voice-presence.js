@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   joinVoiceChannel,
+  getVoiceConnection,
   VoiceConnectionStatus,
   entersState
 } = require("@discordjs/voice");
@@ -42,6 +43,11 @@ async function connectToPermanentRoom(client, guildId) {
   if (!me || !channel.permissionsFor(me)?.has("Connect")) {
     console.error("ON KING BOT ไม่มีสิทธิ์ Connect ในห้องเสียงประจำ: " + channel.name);
     return;
+  }
+
+  const previousConnection = getVoiceConnection(guild.id);
+  if (previousConnection && previousConnection.joinConfig.channelId !== channel.id) {
+    previousConnection.destroy();
   }
 
   const connection = joinVoiceChannel({
