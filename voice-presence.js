@@ -113,4 +113,29 @@ async function restoreVoicePresence(client) {
   }
 }
 
-module.exports = { restoreVoicePresence, setPermanentVoiceChannel };
+function getPermanentVoiceChannelId(guildId) {
+  return settings[guildId] || null;
+}
+
+function getPermanentVoiceConnection(guildId) {
+  return getVoiceConnection(guildId) || null;
+}
+
+async function setPermanentVoiceMute(guildId, muted) {
+  const connection = getPermanentVoiceConnection(guildId);
+  if (!connection) throw new Error("ยังไม่มีการเชื่อมต่อห้องเสียงประจำครับ");
+  if (connection.joinConfig.channelId !== getPermanentVoiceChannelId(guildId)) {
+    throw new Error("การเชื่อมต่อปัจจุบันไม่ใช่ห้องเสียงประจำครับ");
+  }
+  if (connection.joinConfig.selfMute === muted) return;
+  connection.rejoin({ selfMute: muted, selfDeaf: true });
+  await entersState(connection, VoiceConnectionStatus.Ready, 15000);
+}
+
+module.exports = {
+  restoreVoicePresence,
+  setPermanentVoiceChannel,
+  getPermanentVoiceChannelId,
+  getPermanentVoiceConnection,
+  setPermanentVoiceMute
+};
