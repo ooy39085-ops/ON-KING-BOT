@@ -548,6 +548,12 @@ const commands = [
     )
     .toJSON(),
   new SlashCommandBuilder()
+    .setName("breakup")
+    .setNameLocalizations({ th: "เลิก" })
+    .setDescription("ยุติสถานะคู่รักกับสมาชิกที่ระบุ")
+    .addUserOption(o => o.setName("member").setNameLocalizations({ th: "สมาชิก" }).setDescription("เลือกคู่รักของคุณ").setRequired(true))
+    .toJSON(),
+  new SlashCommandBuilder()
     .setName("checkcouple")
     .setNameLocalizations({ th: "เช็คคู่รัก" })
     .setDescription("ตรวจสอบคู่รักและวันเริ่มต้นความสัมพันธ์")
@@ -762,6 +768,45 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply(
           `🏓 Pong! ON KING BOT ทำงานปกติ\nWebSocket Latency: ${latency} ms`
         );
+        return;
+      }
+
+      if (interaction.commandName === "breakup" || interaction.commandName === "เลิก") {
+        const target = interaction.options.getUser("member", true);
+        if (target.bot || target.id === interaction.user.id) {
+          await interaction.reply({ content: "กรุณาเลือกคู่รักของคุณ ไม่สามารถเลือกตัวเองหรือบอทได้ครับ", ephemeral: true });
+          return;
+        }
+        const index = cupidData.couples.findIndex(c =>
+          c.guildId === interaction.guildId &&
+          ((c.user1 === interaction.user.id && c.user2 === target.id) ||
+           (c.user2 === interaction.user.id && c.user1 === target.id))
+        );
+        if (index < 0) {
+          await interaction.reply({ content: "ไม่พบสถานะคู่รักระหว่างคุณกับสมาชิกที่เลือกครับ คุณสามารถเลิกได้เฉพาะคู่รักของตัวเองเท่านั้น", ephemeral: true });
+          return;
+        }
+        const couple = cupidData.couples[index];
+        couple.endedAt = Date.now();
+        cupidData.couples.splice(index, 1);
+        saveCupidData();
+
+        const cardChannel = couple.cardChannelId
+          ? interaction.guild.channels.cache.get(couple.cardChannelId) || await interaction.guild.channels.fetch(couple.cardChannelId).catch(() => null)
+          : null;
+        if (cardChannel && couple.cardMessageId) {
+          const cardMessage = await cardChannel.messages.fetch(couple.cardMessageId).catch(() => null);
+          if (cardMessage) await cardMessage.edit({ embeds: [createCupidCard(couple, true)] }).catch(error => console.error("อัปเดตการ์ดคู่รักหลังเลิกไม่สำเร็จ:", error));
+        }
+
+        const breakupEmbed = new EmbedBuilder()
+          .setColor(0x777777)
+          .setTitle("🖤 ON KING CUPID • แจ้งสิ้นสุดความสัมพันธ์")
+          .setDescription(`<@${interaction.user.id}> และ <@${target.id}> ได้สิ้นสุดสถานะคู่รักแล้วครับ`)
+          .addFields({ name: "วันที่สิ้นสุด", value: cupidDate(couple.endedAt), inline: false })
+          .setFooter({ text: "ON KING COMMUNITY • LOVE IN THE KINGDOM" })
+          .setTimestamp(couple.endedAt);
+        await interaction.reply({ embeds: [breakupEmbed], ephemeral: false });
         return;
       }
 
