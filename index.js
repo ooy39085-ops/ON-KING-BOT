@@ -143,10 +143,7 @@ async function restoreActiveMatches(guild) {
   for (const channel of category.children.cache.values()) {
     if (channel.type !== ChannelType.GuildVoice || !channel.name.startsWith("sweet-")) continue;
     const channelMatch = channel.name.match(/^sweet-(\\d{15,25})-(\\d{15,25})$/);
-    if (!channelMatch) {
-      await channel.delete("ล้างห้อง Sweet Match ที่มีข้อมูลไม่ถูกต้อง").catch(() => {});
-      continue;
-    }
+    if (!channelMatch) continue;
     const ids = [channelMatch[1], channelMatch[2]];
 
     if (channel.members.size === 0) {
