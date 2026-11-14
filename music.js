@@ -6,7 +6,7 @@ const {
   VoiceConnectionStatus,
   createAudioPlayer,
   createAudioResource,
-  joinVoiceChannel,
+  getVoiceConnection,
   entersState
 } = require("@discordjs/voice");
 const {
@@ -14,23 +14,14 @@ const {
   PermissionFlagsBits,
   EmbedBuilder
 } = require("discord.js");
-
-const CONFIG_PATH = path.join(process.cwd(), "on-king-music-config.json");
-let settings = {};
-try {
-  if (fs.existsSync(CONFIG_PATH)) settings = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-} catch (error) {
-  console.error("อ่านการตั้งค่า ON KING MUSIC ไม่สำเร็จ:", error.message);
-}
+const {
+  getPermanentVoiceChannelId,
+  getPermanentVoiceConnection,
+  setPermanentVoiceMute
+} = require("./voice-presence");
 
 const sessions = new Map();
 const MAX_QUEUE_ITEMS = 100;
-
-function saveSettings() {
-  const tempPath = CONFIG_PATH + ".tmp";
-  fs.writeFileSync(tempPath, JSON.stringify(settings, null, 2), "utf8");
-  fs.renameSync(tempPath, CONFIG_PATH);
-}
 
 function parseYouTubeUrl(value) {
   try {
@@ -68,6 +59,10 @@ function getSession(guildId) {
         setImmediate(() => playNext(guildId).catch(error =>
           console.error("เล่นเพลงถัดไปไม่สำเร็จ:", error.message)
         ));
+      } else {
+        setPermanentVoiceMute(guildId, true).catch(error =>
+          console.error("ปิดไมค์หลังจบเพลงไม่สำเร็จ:", error.message)
+        );
       }
     });
 
@@ -86,39 +81,21 @@ function getSession(guildId) {
   return sessions.get(guildId);
 }
 
-async function connectToChannel(channel) {
-  const session = getSession(channel.guild.id);
-  const current = session.connection;
+async function connectToPermanentChannel(guildId) {
+  const session = getSession(guildId);
+  const channelId = getPermanentVoiceChannelId(guildId);
+  const connection = getPermanentVoiceConnection(guildId);
 
-  if (current && current.joinConfig.channelId === channel.id &&
-      current.state.status === VoiceConnectionStatus.Ready) {
-    return session;
+  if (!channelId || !connection) {
+    throw new Error("บอทยังไม่ได้ตั้งค่าห้องเสียงประจำ หรือยังไม่ได้ออนห้องครับ");
+  }
+  if (connection.joinConfig.channelId !== channelId) {
+    throw new Error("บอทไม่ได้เชื่อมต่ออยู่ในห้องเสียงประจำครับ");
   }
 
-  if (current) current.destroy();
-
-  const connection = joinVoiceChannel({
-    channelId: channel.id,
-    guildId: channel.guild.id,
-    adapterCreator: channel.guild.voiceAdapterCreator,
-    selfDeaf: true
-  });
-
+  await entersState(connection, VoiceConnectionStatus.Ready, 20000);
   session.connection = connection;
   connection.subscribe(session.player);
-
-  connection.on(VoiceConnectionStatus.Disconnected, async () => {
-    try {
-      await Promise.race([
-        entersState(connection, VoiceConnectionStatus.Signalling, 5000),
-        entersState(connection, VoiceConnectionStatus.Connecting, 5000)
-      ]);
-    } catch {
-      if (session.connection === connection) connection.destroy();
-    }
-  });
-
-  await entersState(connection, VoiceConnectionStatus.Ready, 20000);
   return session;
 }
 
@@ -138,6 +115,7 @@ async function playNext(guildId) {
       inlineVolume: true
     });
     if (resource.volume) resource.volume.setVolume(session.volume);
+    await setPermanentVoiceMute(guildId, false);
     session.player.play(resource);
     console.log("ON KING MUSIC playing:", item.title);
   } catch (error) {
@@ -207,27 +185,6 @@ const musicCommands = [
   localizedCommand("stopmusic", "ปิดเพลง").setDescription("หยุดเพลงและล้างคิว แต่บอทยังคงอยู่ในห้องเสียง")
 ].map(command => command.toJSON());
 
-async function restoreMusicConnections(client) {
-  for (const [guildId, config] of Object.entries(settings)) {
-    if (!config.voiceChannelId) continue;
-    const guild = client.guilds.cache.get(guildId);
-    if (!guild) continue;
-
-    const channel = await guild.channels.fetch(config.voiceChannelId).catch(() => null);
-    if (!channel || !channel.isVoiceBased()) {
-      console.warn("ไม่พบห้องเสียงล่าสุดของ ON KING MUSIC:", guildId);
-      continue;
-    }
-
-    try {
-      await connectToChannel(channel);
-      console.log("ON KING MUSIC reconnected:", guild.name, channel.name);
-    } catch (error) {
-      console.error("กลับเข้าห้องเสียงเดิมไม่สำเร็จ:", error.message);
-    }
-  }
-}
-
 async function handleMusicInteraction(interaction) {
   const commandNames = [
     "play", "เปิด", "pause", "หยุด", "resume", "เล่นต่อ",
@@ -287,11 +244,12 @@ async function handleMusicInteraction(interaction) {
 
     await interaction.deferReply();
     try {
-      await connectToChannel(voiceChannel);
-
-      // Remember the most recently used voice channel so the bot can rejoin after a restart.
-      settings[guildId] = { voiceChannelId: voiceChannel.id };
-      saveSettings();
+      const permanentChannelId = getPermanentVoiceChannelId(guildId);
+      if (!permanentChannelId || voiceChannel.id !== permanentChannelId) {
+        await interaction.editReply("กรุณาเข้าห้องเสียงประจำที่ ON KING BOT ออนอยู่ก่อนใช้คำสั่งเพลงครับ");
+        return true;
+      }
+      await connectToPermanentChannel(guildId);
 
       const tracks = await resolveTracks(urlInfo);
       if (!tracks.length) {
@@ -409,6 +367,5 @@ async function handleMusicInteraction(interaction) {
 
 module.exports = {
   musicCommands,
-  handleMusicInteraction,
-  restoreMusicConnections
+  handleMusicInteraction
 };
