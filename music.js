@@ -1,51 +1,414 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const play = require("play-dl");
-const { AudioPlayerStatus, VoiceConnectionStatus, createAudioPlayer, createAudioResource, joinVoiceChannel, entersState } = require("@discordjs/voice");
-const { SlashCommandBuilder, ChannelType, PermissionFlagsBits, EmbedBuilder } = require("discord.js");
+const {
+  AudioPlayerStatus,
+  VoiceConnectionStatus,
+  createAudioPlayer,
+  createAudioResource,
+  joinVoiceChannel,
+  entersState
+} = require("@discordjs/voice");
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  EmbedBuilder
+} = require("discord.js");
+
 const CONFIG_PATH = path.join(process.cwd(), "on-king-music-config.json");
 let settings = {};
-try { if (fs.existsSync(CONFIG_PATH)) settings = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); } catch (e) { console.error("อ่านการตั้งค่า MUSIC ไม่สำเร็จ:", e.message); }
+try {
+  if (fs.existsSync(CONFIG_PATH)) settings = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+} catch (error) {
+  console.error("อ่านการตั้งค่า ON KING MUSIC ไม่สำเร็จ:", error.message);
+}
+
 const sessions = new Map();
-function saveSettings() { const tmp = CONFIG_PATH + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), "utf8"); fs.renameSync(tmp, CONFIG_PATH); }
-function isYouTubeUrl(value) { try { const u = new URL(value); return ["youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"].includes(u.hostname) && (u.hostname.includes("youtu.be") || u.pathname === "/watch" || u.pathname.startsWith("/shorts/") || u.pathname.startsWith("/live/")); } catch { return false; } }
-function getSession(id) {
- if (!sessions.has(id)) { const player = createAudioPlayer(); const s = { player, connection: null, queue: [], current: null, volume: 0.5, starting: false };
- player.on(AudioPlayerStatus.Idle, () => { s.current = null; if (s.queue.length) playNext(id).catch(e => console.error("เพลงถัดไปผิดพลาด:", e.message)); });
- player.on("error", e => { console.error("MUSIC player error:", e.message); s.current = null; if (s.queue.length) playNext(id).catch(() => {}); }); sessions.set(id, s); } return sessions.get(id);
+const MAX_QUEUE_ITEMS = 100;
+
+function saveSettings() {
+  const tempPath = CONFIG_PATH + ".tmp";
+  fs.writeFileSync(tempPath, JSON.stringify(settings, null, 2), "utf8");
+  fs.renameSync(tempPath, CONFIG_PATH);
 }
-async function connectToChannel(channel) { const s = getSession(channel.guild.id); if (s.connection && s.connection.joinConfig.channelId === channel.id) return s; if (s.connection) s.connection.destroy();
- const c = joinVoiceChannel({ channelId: channel.id, guildId: channel.guild.id, adapterCreator: channel.guild.voiceAdapterCreator, selfDeaf: true }); s.connection = c; c.subscribe(s.player);
- c.on(VoiceConnectionStatus.Disconnected, async () => { try { await Promise.race([entersState(c, VoiceConnectionStatus.Signalling, 5000), entersState(c, VoiceConnectionStatus.Connecting, 5000)]); } catch { if (s.connection === c) c.destroy(); } });
- await entersState(c, VoiceConnectionStatus.Ready, 20000); return s;
+
+function parseYouTubeUrl(value) {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "").replace(/^m\./, "");
+    if (!["youtube.com", "youtu.be"].includes(host)) return null;
+    const isPlaylist = host === "youtube.com" &&
+      (url.pathname === "/playlist" || url.searchParams.has("list"));
+    const isVideo = host === "youtu.be" ||
+      url.pathname === "/watch" ||
+      url.pathname.startsWith("/shorts/") ||
+      url.pathname.startsWith("/live/");
+    if (!isPlaylist && !isVideo) return null;
+    return { url: url.toString(), isPlaylist };
+  } catch {
+    return null;
+  }
 }
-async function playNext(id) { const s = getSession(id); if (s.starting || !s.queue.length || !s.connection) return; s.starting = true; const item = s.queue.shift();
- try { const stream = await play.stream(item.url, { quality: 2 }); const resource = createAudioResource(stream.stream, { inputType: stream.type, inlineVolume: true }); resource.volume.setVolume(s.volume); s.current = item; s.player.play(resource); console.log("ON KING MUSIC playing:", item.title); }
- catch (e) { console.error("YouTube stream failed:", e.message); s.current = null; setImmediate(() => playNext(id).catch(() => {})); } finally { s.starting = false; }
+
+function getSession(guildId) {
+  if (!sessions.has(guildId)) {
+    const player = createAudioPlayer();
+    const session = {
+      player,
+      connection: null,
+      queue: [],
+      current: null,
+      volume: 0.5,
+      starting: false
+    };
+
+    player.on(AudioPlayerStatus.Idle, () => {
+      if (session.current) session.current = null;
+      if (session.queue.length) {
+        setImmediate(() => playNext(guildId).catch(error =>
+          console.error("เล่นเพลงถัดไปไม่สำเร็จ:", error.message)
+        ));
+      }
+    });
+
+    player.on("error", error => {
+      console.error("ON KING MUSIC player error:", error.message);
+      session.current = null;
+      if (session.queue.length) {
+        setImmediate(() => playNext(guildId).catch(nextError =>
+          console.error("เล่นเพลงถัดไปไม่สำเร็จ:", nextError.message)
+        ));
+      }
+    });
+
+    sessions.set(guildId, session);
+  }
+  return sessions.get(guildId);
 }
-const th = (name, thai) => new SlashCommandBuilder().setName(name).setNameLocalizations({ th: thai });
+
+async function connectToChannel(channel) {
+  const session = getSession(channel.guild.id);
+  const current = session.connection;
+
+  if (current && current.joinConfig.channelId === channel.id &&
+      current.state.status === VoiceConnectionStatus.Ready) {
+    return session;
+  }
+
+  if (current) current.destroy();
+
+  const connection = joinVoiceChannel({
+    channelId: channel.id,
+    guildId: channel.guild.id,
+    adapterCreator: channel.guild.voiceAdapterCreator,
+    selfDeaf: true
+  });
+
+  session.connection = connection;
+  connection.subscribe(session.player);
+
+  connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    try {
+      await Promise.race([
+        entersState(connection, VoiceConnectionStatus.Signalling, 5000),
+        entersState(connection, VoiceConnectionStatus.Connecting, 5000)
+      ]);
+    } catch {
+      if (session.connection === connection) connection.destroy();
+    }
+  });
+
+  await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+  return session;
+}
+
+async function playNext(guildId) {
+  const session = getSession(guildId);
+  if (session.starting || !session.queue.length || !session.connection) return;
+
+  session.starting = true;
+  const item = session.queue.shift();
+  session.current = item;
+
+  try {
+    console.log("ON KING MUSIC preparing:", item.title);
+    const stream = await play.stream(item.url, { quality: 2 });
+    const resource = createAudioResource(stream.stream, {
+      inputType: stream.type,
+      inlineVolume: true
+    });
+    if (resource.volume) resource.volume.setVolume(session.volume);
+    session.player.play(resource);
+    console.log("ON KING MUSIC playing:", item.title);
+  } catch (error) {
+    console.error("ON KING MUSIC YouTube stream failed:", item.url, error.message);
+    session.current = null;
+  } finally {
+    session.starting = false;
+    if (!session.current && session.queue.length) {
+      setImmediate(() => playNext(guildId).catch(error =>
+        console.error("ON KING MUSIC queue recovery failed:", error.message)
+      ));
+    }
+  }
+}
+
+async function resolveTracks(urlInfo) {
+  if (urlInfo.isPlaylist) {
+    const playlist = await play.playlist_info(urlInfo.url, { incomplete: true });
+    const videos = await playlist.all_videos();
+    return videos
+      .filter(video => video && (video.url || video.id))
+      .slice(0, MAX_QUEUE_ITEMS)
+      .map(video => ({
+        url: video.url || "https://www.youtube.com/watch?v=" + video.id,
+        title: video.title || "YouTube playlist track"
+      }));
+  }
+
+  const info = await play.video_info(urlInfo.url);
+  const video = info.video_details;
+  return [{
+    url: urlInfo.url,
+    title: video?.title || "YouTube audio"
+  }];
+}
+
+const localizedCommand = (name, thai) =>
+  new SlashCommandBuilder()
+    .setName(name)
+    .setNameLocalizations({ th: thai });
+
 const musicCommands = [
- th("play","เปิด").setDescription("เล่นเพลงหรือคลิปเสียงจาก YouTube").addStringOption(o => o.setName("url").setNameLocalizations({th:"ลิงก์"}).setDescription("ลิงก์ YouTube").setRequired(true)),
- th("pause","หยุด").setDescription("หยุดเพลงชั่วคราว"), th("resume","เล่นต่อ").setDescription("เล่นเพลงต่อ"), th("skip","ข้าม").setDescription("ข้ามเพลงปัจจุบัน"), th("queue","คิว").setDescription("ดูคิวเพลง"),
- th("volume","เสียง").setDescription("ปรับระดับเสียง 1 ถึง 100").addIntegerOption(o => o.setName("level").setNameLocalizations({th:"ระดับ"}).setDescription("ระดับเสียง 1-100").setMinValue(1).setMaxValue(100).setRequired(true)),
- th("stopmusic","ปิดเพลง").setDescription("หยุดเพลงและล้างคิว แต่บอทยังค้างในห้องเสียง"),
- th("musicsetup","ตั้งค่าห้องเพลง").setDescription("กำหนดห้องเสียงประจำของ ON KING MUSIC").addChannelOption(o => o.setName("channel").setNameLocalizations({th:"ห้องเสียง"}).setDescription("เลือกห้องเสียงประจำ").addChannelTypes(ChannelType.GuildVoice,ChannelType.GuildStageVoice).setRequired(true))
-].map(c => c.toJSON());
-async function restoreMusicConnections(client) { for (const [gid, cfg] of Object.entries(settings)) { const g = client.guilds.cache.get(gid); if (!g || !cfg.voiceChannelId) continue; const ch = await g.channels.fetch(cfg.voiceChannelId).catch(() => null); if (!ch || ![ChannelType.GuildVoice,ChannelType.GuildStageVoice].includes(ch.type)) { console.warn("ไม่พบห้องประจำ MUSIC:", gid); continue; } try { await connectToChannel(ch); console.log("ON KING MUSIC connected:", g.name, ch.name); } catch (e) { console.error("เชื่อมต่อห้อง MUSIC ไม่สำเร็จ:", e.message); } } }
-async function handleMusicInteraction(i) {
- const names = ["play","เปิด","pause","หยุด","resume","เล่นต่อ","skip","ข้าม","queue","คิว","volume","เสียง","stopmusic","ปิดเพลง","musicsetup","ตั้งค่าห้องเพลง"]; if (!i.isChatInputCommand() || !names.includes(i.commandName)) return false;
- if (!i.inGuild()) { await i.reply({content:"ใช้ได้เฉพาะในเซิร์ฟเวอร์ครับ",ephemeral:true}); return true; } const id=i.guildId, s=getSession(id), cmd=i.commandName;
- if (cmd==="musicsetup" || cmd==="ตั้งค่าห้องเพลง") { if (!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) { await i.reply({content:"คำสั่งนี้สำหรับแอดมินที่มีสิทธิ์ Manage Server เท่านั้นครับ",ephemeral:true}); return true; }
- const ch=i.options.getChannel("channel",true), me=await i.guild.members.fetchMe(); if (!ch.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.Connect,PermissionFlagsBits.Speak])) { await i.reply({content:"บอทต้องมีสิทธิ์ View Channel, Connect และ Speak ในห้องนี้ครับ",ephemeral:true}); return true; }
- try { await connectToChannel(ch); settings[id]={voiceChannelId:ch.id}; saveSettings(); await i.reply({content:"ตั้งค่าห้องประจำ ON KING MUSIC เป็น "+ch+" แล้วครับ บอทจะพยายามกลับเข้าห้องนี้หลัง Restart",ephemeral:true}); } catch(e) { console.error(e); await i.reply({content:"เชื่อมต่อห้องเสียงไม่สำเร็จ กรุณาตรวจสอบสิทธิ์บอทครับ",ephemeral:true}); } return true; }
- if (cmd==="play" || cmd==="เปิด") { const url=i.options.getString("url",true).trim(); if (!isYouTubeUrl(url)) { await i.reply({content:"รองรับลิงก์ YouTube แบบวิดีโอ, Shorts และ youtu.be เท่านั้นครับ",ephemeral:true}); return true; }
- const chId=settings[id]?.voiceChannelId, ch=chId ? (i.guild.channels.cache.get(chId)||await i.guild.channels.fetch(chId).catch(()=>null)) : null; if (!ch) { await i.reply({content:"แอดมินยังไม่ได้ตั้งค่าห้องประจำ ใช้ /ตั้งค่าห้องเพลง ก่อนครับ",ephemeral:true}); return true; }
- await i.deferReply(); try { await connectToChannel(ch); const info=await play.video_info(url); const title=info.video_details?.title||"YouTube audio"; s.queue.push({url,title,requestedBy:i.user.id}); if (!s.current && s.player.state.status!==AudioPlayerStatus.Playing && !s.starting) await playNext(id); await i.editReply("🎵 เพิ่ม **"+title.slice(0,150)+"** ลงคิวแล้วครับ"); } catch(e) { console.error("เพิ่มเพลงไม่สำเร็จ:",e); await i.editReply("เปิดลิงก์นี้ไม่สำเร็จครับ ลองตรวจสอบว่าคลิปเป็นสาธารณะและยังเล่นได้หรือไม่"); } return true; }
- if (cmd==="pause"||cmd==="หยุด") { const ok=s.player.pause(); await i.reply({content:ok?"⏸️ หยุดเพลงชั่วคราวแล้วครับ":"ตอนนี้ไม่มีเพลงที่กำลังเล่นครับ",ephemeral:true}); return true; }
- if (cmd==="resume"||cmd==="เล่นต่อ") { const ok=s.player.unpause(); await i.reply({content:ok?"▶️ เล่นเพลงต่อแล้วครับ":"ไม่มีเพลงที่หยุดค้างไว้ครับ",ephemeral:true}); return true; }
- if (cmd==="skip"||cmd==="ข้าม") { if (!s.current) await i.reply({content:"ตอนนี้ไม่มีเพลงที่กำลังเล่นครับ",ephemeral:true}); else { s.player.stop(true); await i.reply({content:"⏭️ ข้ามเพลงแล้วครับ",ephemeral:true}); } return true; }
- if (cmd==="queue"||cmd==="คิว") { const lines=[s.current?"กำลังเล่น: **"+s.current.title+"**":"ยังไม่มีเพลงที่กำลังเล่น",...s.queue.slice(0,15).map((x,n)=>(n+1)+". "+x.title)]; await i.reply({embeds:[new EmbedBuilder().setColor(0xD4AF37).setTitle("ON KING MUSIC • QUEUE").setDescription(lines.join("\n").slice(0,4000))],ephemeral:true}); return true; }
- if (cmd==="volume"||cmd==="เสียง") { s.volume=i.options.getInteger("level",true)/100; const r=s.player.state.resource; if(r?.volume) r.volume.setVolume(s.volume); await i.reply({content:"ตั้งระดับเสียงเป็น "+Math.round(s.volume*100)+"% แล้วครับ",ephemeral:true}); return true; }
- if (cmd==="stopmusic"||cmd==="ปิดเพลง") { s.queue=[]; s.current=null; s.player.stop(true); await i.reply({content:"หยุดเพลงและล้างคิวแล้วครับ บอทยังคงอยู่ในห้องเสียงประจำ",ephemeral:true}); return true; } return false;
+  localizedCommand("play", "เปิด")
+    .setDescription("เล่นเพลงหรือ Playlist จาก YouTube")
+    .addStringOption(option =>
+      option
+        .setName("url")
+        .setNameLocalizations({ th: "ลิงก์" })
+        .setDescription("ลิงก์ YouTube หรือ Playlist")
+        .setRequired(true)
+    ),
+  localizedCommand("pause", "หยุด").setDescription("หยุดเพลงชั่วคราว"),
+  localizedCommand("resume", "เล่นต่อ").setDescription("เล่นเพลงต่อ"),
+  localizedCommand("skip", "ข้าม").setDescription("ข้ามเพลงปัจจุบัน"),
+  localizedCommand("queue", "คิว").setDescription("ดูเพลงที่กำลังเล่นและรายการในคิว"),
+  localizedCommand("volume", "เสียง")
+    .setDescription("ปรับระดับเสียง 1 ถึง 100")
+    .addIntegerOption(option =>
+      option
+        .setName("level")
+        .setNameLocalizations({ th: "ระดับ" })
+        .setDescription("ระดับเสียง 1-100")
+        .setMinValue(1)
+        .setMaxValue(100)
+        .setRequired(true)
+    ),
+  localizedCommand("stopmusic", "ปิดเพลง").setDescription("หยุดเพลงและล้างคิว แต่บอทยังคงอยู่ในห้องเสียง")
+].map(command => command.toJSON());
+
+async function restoreMusicConnections(client) {
+  for (const [guildId, config] of Object.entries(settings)) {
+    if (!config.voiceChannelId) continue;
+    const guild = client.guilds.cache.get(guildId);
+    if (!guild) continue;
+
+    const channel = await guild.channels.fetch(config.voiceChannelId).catch(() => null);
+    if (!channel || !channel.isVoiceBased()) {
+      console.warn("ไม่พบห้องเสียงล่าสุดของ ON KING MUSIC:", guildId);
+      continue;
+    }
+
+    try {
+      await connectToChannel(channel);
+      console.log("ON KING MUSIC reconnected:", guild.name, channel.name);
+    } catch (error) {
+      console.error("กลับเข้าห้องเสียงเดิมไม่สำเร็จ:", error.message);
+    }
+  }
 }
-module.exports={musicCommands,handleMusicInteraction,restoreMusicConnections};
+
+async function handleMusicInteraction(interaction) {
+  const commandNames = [
+    "play", "เปิด", "pause", "หยุด", "resume", "เล่นต่อ",
+    "skip", "ข้าม", "queue", "คิว", "volume", "เสียง",
+    "stopmusic", "ปิดเพลง"
+  ];
+
+  if (!interaction.isChatInputCommand() || !commandNames.includes(interaction.commandName)) {
+    return false;
+  }
+
+  if (!interaction.inGuild()) {
+    await interaction.reply({ content: "ใช้ ON KING MUSIC ได้เฉพาะในเซิร์ฟเวอร์ครับ", ephemeral: true });
+    return true;
+  }
+
+  const guildId = interaction.guildId;
+  const session = getSession(guildId);
+  const command = interaction.commandName;
+
+  if (["play", "เปิด"].includes(command)) {
+    const rawUrl = interaction.options.getString("url", true).trim();
+    const urlInfo = parseYouTubeUrl(rawUrl);
+
+    if (!urlInfo) {
+      await interaction.reply({
+        content: "ลิงก์ไม่ถูกต้องครับ กรุณาใช้ลิงก์ YouTube วิดีโอ, Shorts หรือ Playlist ที่เปิดให้เข้าถึงได้",
+        ephemeral: true
+      });
+      return true;
+    }
+
+    const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+    const voiceChannel = member?.voice?.channel;
+
+    if (!voiceChannel) {
+      await interaction.reply({
+        content: "กรุณาเข้าห้องเสียงที่ต้องการฟังก่อน แล้วใช้ /เปิด อีกครั้งครับ",
+        ephemeral: true
+      });
+      return true;
+    }
+
+    const botMember = await interaction.guild.members.fetchMe();
+    const permissions = voiceChannel.permissionsFor(botMember);
+    if (!permissions?.has([
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.Connect,
+      PermissionFlagsBits.Speak
+    ])) {
+      await interaction.reply({
+        content: "บอทไม่มีสิทธิ์เข้าห้องหรือพูดในห้องเสียงนี้ครับ กรุณาตรวจสอบ View Channel, Connect และ Speak",
+        ephemeral: true
+      });
+      return true;
+    }
+
+    await interaction.deferReply();
+    try {
+      await connectToChannel(voiceChannel);
+
+      // Remember the most recently used voice channel so the bot can rejoin after a restart.
+      settings[guildId] = { voiceChannelId: voiceChannel.id };
+      saveSettings();
+
+      const tracks = await resolveTracks(urlInfo);
+      if (!tracks.length) {
+        await interaction.editReply("ไม่พบเพลงใน Playlist นี้ครับ หรือ Playlist อาจเป็นส่วนตัว");
+        return true;
+      }
+
+      const roomLeft = Math.max(0, MAX_QUEUE_ITEMS - session.queue.length - (session.current ? 1 : 0));
+      const acceptedTracks = tracks.slice(0, roomLeft);
+      if (!acceptedTracks.length) {
+        await interaction.editReply("คิวเพลงเต็มแล้วครับ (จำกัด 100 รายการ) รอให้เพลงเดิมเล่นจบก่อนนะครับ");
+        return true;
+      }
+
+      for (const track of acceptedTracks) {
+        session.queue.push({
+          url: track.url,
+          title: track.title,
+          requestedBy: interaction.user.id
+        });
+      }
+
+      const playlistLabel = urlInfo.isPlaylist
+        ? "เพิ่ม Playlist จำนวน " + acceptedTracks.length + " เพลง"
+        : "เพิ่มเพลง";
+      if (!session.current && !session.starting) {
+        await playNext(guildId);
+      }
+
+      await interaction.editReply(
+        "🎵 " + playlistLabel + " ลงคิวแล้วครับ\n" +
+        "ใช้ /คิว เพื่อตรวจสอบรายการได้เลย" +
+        (tracks.length > acceptedTracks.length ? "\nหมายเหตุ: เพิ่มได้สูงสุดตามพื้นที่คิวที่เหลือครับ" : "")
+      );
+    } catch (error) {
+      console.error("ON KING MUSIC เพิ่มรายการไม่สำเร็จ:", error);
+      await interaction.editReply(
+        "เพิ่มเพลงไม่สำเร็จครับ ลองตรวจสอบว่าลิงก์เป็นสาธารณะและยังเปิดเล่นได้หรือไม่"
+      );
+    }
+    return true;
+  }
+
+  if (["pause", "หยุด"].includes(command)) {
+    const paused = session.player.pause();
+    await interaction.reply({
+      content: paused ? "⏸️ หยุดเพลงชั่วคราวแล้วครับ" : "ตอนนี้ไม่มีเพลงที่กำลังเล่นครับ",
+      ephemeral: true
+    });
+    return true;
+  }
+
+  if (["resume", "เล่นต่อ"].includes(command)) {
+    const resumed = session.player.unpause();
+    await interaction.reply({
+      content: resumed ? "▶️ เล่นเพลงต่อแล้วครับ" : "ไม่มีเพลงที่หยุดค้างไว้ครับ",
+      ephemeral: true
+    });
+    return true;
+  }
+
+  if (["skip", "ข้าม"].includes(command)) {
+    if (!session.current) {
+      await interaction.reply({ content: "ตอนนี้ไม่มีเพลงที่กำลังเล่นครับ", ephemeral: true });
+    } else {
+      session.player.stop(true);
+      await interaction.reply({ content: "⏭️ ข้ามเพลงแล้วครับ", ephemeral: true });
+    }
+    return true;
+  }
+
+  if (["queue", "คิว"].includes(command)) {
+    const lines = [
+      session.current ? "กำลังเล่น/กำลังโหลด: **" + session.current.title + "**" : "ยังไม่มีเพลงที่กำลังเล่น",
+      ...session.queue.slice(0, 20).map((track, index) =>
+        (index + 1) + ". " + track.title
+      )
+    ];
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xD4AF37)
+          .setTitle("ON KING MUSIC • QUEUE")
+          .setDescription(lines.join("\n").slice(0, 4000))
+      ],
+      ephemeral: true
+    });
+    return true;
+  }
+
+  if (["volume", "เสียง"].includes(command)) {
+    session.volume = interaction.options.getInteger("level", true) / 100;
+    const resource = session.player.state.resource;
+    if (resource?.volume) resource.volume.setVolume(session.volume);
+    await interaction.reply({
+      content: "ตั้งระดับเสียงเป็น " + Math.round(session.volume * 100) + "% แล้วครับ",
+      ephemeral: true
+    });
+    return true;
+  }
+
+  if (["stopmusic", "ปิดเพลง"].includes(command)) {
+    session.queue = [];
+    session.current = null;
+    session.player.stop(true);
+    await interaction.reply({
+      content: "หยุดเพลงและล้างคิวแล้วครับ บอทยังคงอยู่ในห้องเสียง",
+      ephemeral: true
+    });
+    return true;
+  }
+
+  return false;
+}
+
+module.exports = {
+  musicCommands,
+  handleMusicInteraction,
+  restoreMusicConnections
+};
