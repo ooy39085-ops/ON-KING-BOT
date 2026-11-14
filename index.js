@@ -78,7 +78,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.commandName === "ping") {
     const latency = Math.round(client.ws.ping);
     await interaction.reply(
-      `🏓 Pong! ON KING BOT ทำงานปกติ\\nWebSocket Latency: ${latency} ms`
+      `🏓 Pong! ON KING BOT ทำงานปกติ\nWebSocket Latency: ${latency} ms`
     );
   }
 });
