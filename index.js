@@ -692,6 +692,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
           const requestChannel = interaction.options.getChannel("request_channel");
           const cardChannel = interaction.options.getChannel("card_channel");
+          if (requestChannel.id === cardChannel.id) {
+            await interaction.reply({ content: "กรุณาเลือกคนละห้องครับ ห้องขอเป็นแฟนและห้องการ์ดคู่รักต้องแยกกัน", ephemeral: true }); return;
+          }
           const me = await interaction.guild.members.fetchMe();
           const needed = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
           if (!requestChannel.permissionsFor(me)?.has(needed) || !cardChannel.permissionsFor(me)?.has(needed)) {
