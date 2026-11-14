@@ -172,7 +172,7 @@ async function getAvailableSweetZone(guild) {
             `โซน ${fullZone.name} เต็มแล้ว (${fullZone.children.cache.size}/${SWEET_ZONE_CHANNEL_LIMIT} ช่องย่อย)`,
             `สมาชิกที่กำลังใช้งานในโซน: ${activeMembersInFullZone} คน`,
             `ระบบสร้างโซนใหม่ ${newZone.name} ให้อัตโนมัติแล้วครับ`
-          ].join("\\n"))
+          ].join("\n"))
           .setFooter({ text: "ON KING COMMUNITY • Sweet Match" })
           .setTimestamp()]
       }).catch(() => {});
