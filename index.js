@@ -17,7 +17,7 @@ const {
   StringSelectMenuBuilder
 } = require("discord.js");
 
-const { restoreVoicePresence } = require("./voice-presence");
+const { restoreVoicePresence, setPermanentVoiceChannel } = require("./voice-presence");
 const token = process.env.DISCORD_BOT_TOKEN;
 const syncSecret = process.env.DISCORD_SYNC_SECRET;
 const supabaseUrl = (process.env.SUPABASE_URL || "https://alfaddeavpefqobspvxt.supabase.co").replace(/\/$/, "");
@@ -521,6 +521,20 @@ const commands = [
     .setDescription("ตรวจสอบว่า ON KING BOT ทำงานปกติหรือไม่")
     .toJSON(),
   new SlashCommandBuilder()
+    .setName("voice-room")
+    .setNameLocalizations({ th: "ตั้งห้องออน" })
+    .setDescription("ตั้งค่าห้องเสียงประจำของ ON KING BOT")
+    .addChannelOption(option =>
+      option
+        .setName("channel")
+        .setNameLocalizations({ th: "ห้องเสียง" })
+        .setDescription("เลือกห้องเสียงที่ต้องการให้บอทออนประจำ")
+        .addChannelTypes(ChannelType.GuildVoice)
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName("sweetmatch")
     .setDescription("เริ่มจับคู่และตั้งค่า ON KING SWEET MATCH")
     .addSubcommand(subcommand =>
@@ -775,6 +789,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
         );
         return;
       }
+
+      if (interaction.commandName === "voice-room" || interaction.commandName === "ตั้งห้องออน") {
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+          await interaction.reply({ content: "คำสั่งนี้สำหรับแอดมินที่มีสิทธิ์ Manage Server เท่านั้นครับ", ephemeral: true });
+          return;
+        }
+        const selectedChannel = interaction.options.getChannel("channel", true);
+        try {
+          const savedChannel = await setPermanentVoiceChannel(client, interaction.guildId, selectedChannel.id);
+          await interaction.reply({
+            content: `ตั้งห้องเสียงประจำสำเร็จแล้วครับ 👑\nON KING BOT จะออนที่ ${savedChannel} และจะพยายามกลับเข้าห้องเดิมหลังรีสตาร์ตหรือหลุดจากห้องครับ`,
+            ephemeral: true
+          });
+        } catch (error) {
+          await interaction.reply({ content: `ตั้งห้องเสียงไม่สำเร็จ: ${error.message}`, ephemeral: true });
+        }
+        return;
+      }
+
+
 
       if (interaction.commandName === "breakup" || interaction.commandName === "เลิก") {
         const target = interaction.options.getUser("member", true);
