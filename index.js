@@ -302,9 +302,9 @@ async function tryMatch(guild, newEntry) {
   try {
     const safeChannelPart = (value) => String(value || "member")
       .normalize("NFKC")
-      .replace(/[^\\p{L}\\p{N}_ -]/gu, "")
+      .replace(/[^\p{L}\p{N}_ -]/gu, "")
       .trim()
-      .replace(/\\s+/g, "-")
+      .replace(/\s+/g, "-")
       .slice(0, 35) || "member";
     const firstRoomName = safeChannelPart(firstMember.displayName || firstMember.user.username);
     const secondRoomName = safeChannelPart(secondMember.displayName || secondMember.user.username);
