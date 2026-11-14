@@ -18,6 +18,7 @@ const {
 } = require("discord.js");
 
 const { restoreVoicePresence, setPermanentVoiceChannel } = require("./voice-presence");
+const { musicCommands, handleMusicInteraction } = require("./music");
 const token = process.env.DISCORD_BOT_TOKEN;
 const syncSecret = process.env.DISCORD_SYNC_SECRET;
 const supabaseUrl = (process.env.SUPABASE_URL || "https://alfaddeavpefqobspvxt.supabase.co").replace(/\/$/, "");
@@ -524,6 +525,7 @@ const commands = [
     .setName("voice-room")
     .setNameLocalizations({ th: "ตั้งห้องออน" })
     .setDescription("ตั้งค่าห้องเสียงประจำของ ON KING BOT")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addChannelOption(option =>
       option
         .setName("channel")
@@ -537,6 +539,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("sweetmatch")
     .setDescription("เริ่มจับคู่และตั้งค่า ON KING SWEET MATCH")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand(subcommand =>
       subcommand
         .setName("setup")
@@ -586,7 +589,8 @@ const commands = [
       .addUserOption(o => o.setName("member").setDescription("สมาชิกที่ต้องการขอเป็นแฟน").setRequired(true)))
     .addSubcommand(s => s.setName("status").setDescription("ตรวจสอบสถานะคู่รัก")
       .addUserOption(o => o.setName("member").setDescription("สมาชิกที่ต้องการตรวจสอบ").setRequired(false)))
-    .toJSON()
+    .toJSON(),
+  ...musicCommands
 ];
 
 const rest = new REST({ version: "10" }).setToken(token);
@@ -782,6 +786,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
 
     if (interaction.isChatInputCommand()) {
+      const musicHandled = await handleMusicInteraction(interaction);
+      if (musicHandled) return;
+
       if (interaction.commandName === "ping") {
         const latency = Math.round(client.ws.ping);
         await interaction.reply(
