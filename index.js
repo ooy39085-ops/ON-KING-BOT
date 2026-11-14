@@ -107,6 +107,78 @@ function saveSweetSettings() {
   fs.renameSync(tempPath, CONFIG_PATH);
 }
 
+const SWEET_ZONE_CHANNEL_LIMIT = 50;
+
+async function getSweetZones(guild) {
+  const baseId = sweetSettings[guild.id]?.categoryChannelId;
+  if (!baseId) return [];
+  await guild.channels.fetch().catch(() => null);
+  const base = guild.channels.cache.get(baseId);
+  if (!base || base.type !== ChannelType.GuildCategory) return [];
+  return [...guild.channels.cache.values()]
+    .filter(channel =>
+      channel.type === ChannelType.GuildCategory &&
+      (channel.id === baseId || /^💗 SWEET MATCH \d{2,}$/.test(channel.name))
+    )
+    .sort((a, b) => {
+      if (a.id === baseId) return -1;
+      if (b.id === baseId) return 1;
+      return a.name.localeCompare(b.name, "en");
+    });
+}
+
+async function getAvailableSweetZone(guild) {
+  const zones = await getSweetZones(guild);
+  if (!zones.length) return null;
+
+  const available = zones.find(zone => zone.children.cache.size < SWEET_ZONE_CHANNEL_LIMIT);
+  if (available) return available;
+
+  const baseId = sweetSettings[guild.id]?.categoryChannelId;
+  const base = guild.channels.cache.get(baseId);
+  const usedNumbers = zones
+    .map(zone => Number(zone.name.match(/^💗 SWEET MATCH (\d{2,})$/)?.[1] || 1))
+    .filter(Number.isFinite);
+  const nextNumber = Math.max(1, ...usedNumbers) + 1;
+
+  try {
+    const newZone = await guild.channels.create({
+      name: `💗 SWEET MATCH ${String(nextNumber).padStart(2, "0")}`,
+      type: ChannelType.GuildCategory,
+      permissionOverwrites: base.permissionOverwrites.cache.map(overwrite => ({
+        id: overwrite.id,
+        allow: overwrite.allow,
+        deny: overwrite.deny,
+        type: overwrite.type
+      })),
+      position: base.rawPosition + zones.length,
+      reason: "สร้างโซนใหม่อัตโนมัติเมื่อโซน ON KING SWEET MATCH เต็ม"
+    });
+
+    const panelId = sweetSettings[guild.id]?.panelChannelId;
+    const panel = panelId
+      ? guild.channels.cache.get(panelId) || await guild.channels.fetch(panelId).catch(() => null)
+      : null;
+    if (panel?.isTextBased()) {
+      await panel.send({
+        embeds: [new EmbedBuilder()
+          .setColor(0xD4AF37)
+          .setTitle("💗 ON KING SWEET MATCH • เปิดโซนใหม่")
+          .setDescription([
+            `โซน ${zones[zones.length - 1].name} เต็มแล้ว (${zones[zones.length - 1].children.cache.size}/${SWEET_ZONE_CHANNEL_LIMIT} ช่องย่อย)`,
+            `ระบบสร้างโซนใหม่ ${newZone.name} ให้อัตโนมัติแล้วครับ`
+          ].join("\\n"))
+          .setFooter({ text: "ON KING COMMUNITY • Sweet Match" })
+          .setTimestamp()]
+      }).catch(() => {});
+    }
+    return newZone;
+  } catch (error) {
+    console.error("สร้างโซน Sweet Match เพิ่มไม่สำเร็จ:", error);
+    return null;
+  }
+}
+
 function getQueue(guildId) {
   if (!searchQueues.has(guildId)) searchQueues.set(guildId, []);
   return searchQueues.get(guildId);
@@ -181,29 +253,26 @@ function createPanelEmbed() {
 }
 
 async function restoreActiveMatches(guild) {
-  const categoryId = sweetSettings[guild.id]?.categoryChannelId;
-  if (!categoryId) return;
-  const category = guild.channels.cache.get(categoryId)
-    || await guild.channels.fetch(categoryId).catch(() => null);
-  if (!category || category.type !== ChannelType.GuildCategory) return;
+  const zones = await getSweetZones(guild);
+  for (const category of zones) {
+    for (const channel of category.children.cache.values()) {
+      if (channel.type !== ChannelType.GuildVoice || !channel.name.startsWith("💗・")) continue;
+      const ids = [...channel.members.keys()];
 
-  for (const channel of category.children.cache.values()) {
-    if (channel.type !== ChannelType.GuildVoice || !channel.name.startsWith("💗・")) continue;
-    const ids = [...channel.members.keys()];
-
-    if (ids.length !== 2) {
-      if (ids.length === 1) {
-        try {
-          const remaining = await client.users.fetch(ids[0]);
-          await remaining.send("💛 อีกฝ่ายออกจากห้องระหว่างที่บอทหยุดทำงาน การจับคู่ ON KING SWEET MATCH จึงสิ้นสุดลงครับ");
-        } catch {}
+      if (ids.length !== 2) {
+        if (ids.length === 1) {
+          try {
+            const remaining = await client.users.fetch(ids[0]);
+            await remaining.send("💛 อีกฝ่ายออกจากห้องระหว่างที่บอทหยุดทำงาน การจับคู่ ON KING SWEET MATCH จึงสิ้นสุดลงครับ");
+          } catch {}
+        }
+        await channel.delete("ล้างห้อง Sweet Match ที่ไม่ครบสองสมาชิกหลังบอทเริ่มทำงาน").catch(() => {});
+        continue;
       }
-      await channel.delete("ล้างห้อง Sweet Match ที่ไม่ครบสองสมาชิกหลังบอทเริ่มทำงาน").catch(() => {});
-      continue;
-    }
 
-    activeMatches.set(channel.id, { guildId: guild.id, userIds: ids, ended: false });
-    for (const id of ids) activeUsers.set(id, channel.id);
+      activeMatches.set(channel.id, { guildId: guild.id, userIds: ids, ended: false });
+      for (const id of ids) activeUsers.set(id, channel.id);
+    }
   }
 }
 
@@ -289,10 +358,9 @@ async function tryMatch(guild, newEntry) {
     return true;
   }
 
-  const categoryId = sweetSettings[guild.id]?.categoryChannelId;
-  const category = categoryId ? guild.channels.cache.get(categoryId) : null;
-  if (!category || category.type !== ChannelType.GuildCategory) {
-    const message = "ยังไม่ได้ตั้งค่าหมวดหมู่ห้อง Sweet Match หรือหมวดหมู่ถูกลบแล้ว กรุณาแจ้งแอดมิน";
+  const category = await getAvailableSweetZone(guild);
+  if (!category) {
+    const message = "ไม่สามารถหาโซน Sweet Match หรือสร้างโซนใหม่ได้แล้วครับ กรุณาแจ้งแอดมินตรวจสอบจำนวนช่องของเซิร์ฟเวอร์และสิทธิ์ Manage Channels";
     await current.interaction.editReply({ content: message, components: [] }).catch(() => {});
     await partner.interaction.editReply({ content: message, components: [] }).catch(() => {});
     return true;
@@ -401,7 +469,7 @@ async function beginSearch(interaction, selection) {
     return;
   }
 
-  const existing = await removeFromQueue(guild.id, interaction.user.id);
+  const existing = getQueue(guild.id).some(entry => entry.userId === interaction.user.id);
   if (existing) {
     await interaction.editReply({ content: "คุณกำลังค้นหาคู่อยู่แล้วครับ", components: [] });
     return;
