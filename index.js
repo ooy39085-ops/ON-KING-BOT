@@ -434,7 +434,15 @@ async function registerGuildCommands(guildId, guildName = guildId) {
       Routes.applicationGuildCommands(client.user.id, guildId),
       { body: commands }
     );
-    console.log(`ลงทะเบียนคำสั่งสำเร็จ: ${guildName}`);
+    console.log(`ส่งคำสั่งไป Discord สำเร็จ: ${guildName} (Guild ID: ${guildId}, App ID: ${client.user.id})`);
+    try {
+      const registeredCommands = await rest.get(
+        Routes.applicationGuildCommands(client.user.id, guildId)
+      );
+      console.log(`ตรวจสอบคำสั่งบน Discord ของ ${guildName}: ${registeredCommands.map(command => "/" + command.name).join(", ") || "ไม่พบคำสั่ง"}`);
+    } catch (verifyError) {
+      console.error(`ตรวจสอบรายการคำสั่งบน Discord ไม่สำเร็จ (${guildName}):`, verifyError);
+    }
   } catch (error) {
     console.error(`ลงทะเบียนคำสั่งไม่สำเร็จ (${guildName}):`, error);
   }
