@@ -107,6 +107,30 @@ async function connectToChannel(channel) {
   session.connection = connection;
   connection.subscribe(session.player);
 
+  connection.on("stateChange", (oldState, newState) => {
+    console.log(
+      "ON KING MUSIC voice state:",
+      oldState.status,
+      "->",
+      newState.status,
+      "| guild:",
+      channel.guild.id,
+      "| channel:",
+      channel.id
+    );
+    if (newState.status === VoiceConnectionStatus.Disconnected) {
+      console.warn("ON KING MUSIC voice disconnected:", newState.reason || "no reason provided");
+    }
+  });
+
+  connection.on("error", error => {
+    console.error("ON KING MUSIC voice connection error:", error);
+  });
+
+  connection.on("debug", message => {
+    console.log("ON KING MUSIC voice debug:", message);
+  });
+
   connection.on(VoiceConnectionStatus.Disconnected, async () => {
     try {
       await Promise.race([
@@ -118,7 +142,18 @@ async function connectToChannel(channel) {
     }
   });
 
-  await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+  try {
+    await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+    console.log("ON KING MUSIC voice connection READY:", channel.guild.id, channel.id);
+  } catch (error) {
+    console.error(
+      "ON KING MUSIC voice did not become READY:",
+      "status =", connection.state.status,
+      "error =", error.name + ": " + error.message
+    );
+    throw error;
+  }
+
   return session;
 }
 
