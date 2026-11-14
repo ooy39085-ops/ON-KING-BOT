@@ -133,6 +133,40 @@ function createPanelEmbed() {
     .setFooter({ text: "ON KING COMMUNITY • Sweet Match" });
 }
 
+async function restoreActiveMatches(guild) {
+  const categoryId = sweetSettings[guild.id]?.categoryChannelId;
+  if (!categoryId) return;
+  const category = guild.channels.cache.get(categoryId)
+    || await guild.channels.fetch(categoryId).catch(() => null);
+  if (!category || category.type !== ChannelType.GuildCategory) return;
+
+  for (const channel of category.children.cache.values()) {
+    if (channel.type !== ChannelType.GuildVoice || !channel.topic?.startsWith("ONKING_SWEET_MATCH:")) continue;
+    const ids = channel.topic.split(":").slice(1);
+    if (ids.length !== 2 || ids.some(id => !/^\\d{15,25}$/.test(id))) {
+      await channel.delete("ล้างห้อง Sweet Match ที่มีข้อมูลไม่ถูกต้อง").catch(() => {});
+      continue;
+    }
+
+    if (channel.members.size === 0) {
+      await channel.delete("ล้างห้อง Sweet Match ที่ไม่มีสมาชิกหลังบอทเริ่มทำงาน").catch(() => {});
+      continue;
+    }
+
+    activeMatches.set(channel.id, { guildId: guild.id, userIds: ids, ended: false });
+    for (const id of ids) activeUsers.set(id, channel.id);
+
+    const missingId = ids.find(id => !channel.members.has(id));
+    if (missingId) {
+      await endMatch(
+        channel.id,
+        "💛 อีกฝ่ายออกจากห้องระหว่างที่บอทหยุดทำงาน การจับคู่จึงสิ้นสุดลงครับ",
+        missingId
+      );
+    }
+  }
+}
+
 async function sendPanel(channel) {
   await channel.send({
     embeds: [createPanelEmbed()],
@@ -230,6 +264,7 @@ async function tryMatch(guild, newEntry) {
       name: `sweet-${current.userId.slice(-4)}-${partner.userId.slice(-4)}`,
       type: ChannelType.GuildVoice,
       parent: category.id,
+      topic: `ONKING_SWEET_MATCH:${current.userId}:${partner.userId}`,
       userLimit: 2,
       permissionOverwrites: [
         {
@@ -306,7 +341,8 @@ async function beginSearch(interaction, selection) {
     await interaction.editReply({ content: "ระบบนี้ใช้งานได้ภายในเซิร์ฟเวอร์ ON KING เท่านั้น", components: [] });
     return;
   }
-  if (!interaction.member.voice?.channelId) {
+  const searchingMember = await guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!searchingMember?.voice?.channelId) {
     await interaction.editReply({
       content: "กรุณาเข้าห้องเสียงใดก็ได้ในเซิร์ฟเวอร์ก่อน แล้วกดเริ่มค้นหาอีกครั้งครับ",
       components: []
@@ -509,6 +545,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   }
 
   for (const guild of guilds) {
+    await restoreActiveMatches(guild);
     await registerGuildCommands(guild.id, guild.name);
     await syncAllGuildMembers(guild);
   }
@@ -651,7 +688,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.reply({ content: "ใช้ได้เฉพาะในเซิร์ฟเวอร์ครับ", ephemeral: true });
           return;
         }
-        if (!interaction.member.voice?.channelId) {
+        const clickingMember = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+        if (!clickingMember?.voice?.channelId) {
           await interaction.reply({
             content: "กรุณาเข้าห้องเสียงใดก็ได้ก่อนเริ่มจับคู่ครับ",
             ephemeral: true
