@@ -398,8 +398,7 @@ const commands = [
     .toJSON(),
   new SlashCommandBuilder()
     .setName("sweetmatch")
-    .setDescription("ตั้งค่าและจัดการ ON KING SWEET MATCH")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setDescription("เริ่มจับคู่และตั้งค่า ON KING SWEET MATCH")
     .addSubcommand(subcommand =>
       subcommand
         .setName("setup")
@@ -619,6 +618,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (interaction.commandName === "sweetmatch") {
         const subcommand = interaction.options.getSubcommand();
+
+        if (
+          ["setup", "panel"].includes(subcommand) &&
+          !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: "คำสั่งนี้สำหรับแอดมินที่มีสิทธิ์ Manage Server เท่านั้นครับ",
+            ephemeral: true
+          });
+          return;
+        }
 
         if (subcommand === "setup") {
           const panelChannel = interaction.options.getChannel("panel_channel");
