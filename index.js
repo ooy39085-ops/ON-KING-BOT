@@ -17,6 +17,7 @@ const {
   StringSelectMenuBuilder
 } = require("discord.js");
 
+const { musicCommands, handleMusicInteraction, restoreMusicConnections } = require("./music");
 const token = process.env.DISCORD_BOT_TOKEN;
 const syncSecret = process.env.DISCORD_SYNC_SECRET;
 const supabaseUrl = (process.env.SUPABASE_URL || "https://alfaddeavpefqobspvxt.supabase.co").replace(/\/$/, "");
@@ -515,6 +516,7 @@ async function beginSearch(interaction, selection) {
 }
 
 const commands = [
+  ...musicCommands,
   new SlashCommandBuilder()
     .setName("ping")
     .setDescription("ตรวจสอบว่า ON KING BOT ทำงานปกติหรือไม่")
@@ -690,6 +692,8 @@ client.once(Events.ClientReady, async (readyClient) => {
     status: "online"
   });
 
+  await restoreMusicConnections(readyClient);
+
   const guilds = [...readyClient.guilds.cache.values()];
   if (guilds.length === 0) {
     console.warn("บอทยังไม่พบเซิร์ฟเวอร์ Discord ที่เข้าร่วม");
@@ -763,6 +767,8 @@ client.on(Events.GuildMemberRemove, async (member) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (await handleMusicInteraction(interaction, client)) return;
+
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === "ping") {
         const latency = Math.round(client.ws.ping);
