@@ -160,12 +160,17 @@ async function getAvailableSweetZone(guild) {
       ? guild.channels.cache.get(panelId) || await guild.channels.fetch(panelId).catch(() => null)
       : null;
     if (panel?.isTextBased()) {
+      const fullZone = zones[zones.length - 1];
+      const activeMembersInFullZone = [...fullZone.children.cache.values()]
+        .filter(channel => channel.type === ChannelType.GuildVoice && channel.name.startsWith("💗・"))
+        .reduce((total, channel) => total + channel.members.size, 0);
       await panel.send({
         embeds: [new EmbedBuilder()
           .setColor(0xD4AF37)
           .setTitle("💗 ON KING SWEET MATCH • เปิดโซนใหม่")
           .setDescription([
-            `โซน ${zones[zones.length - 1].name} เต็มแล้ว (${zones[zones.length - 1].children.cache.size}/${SWEET_ZONE_CHANNEL_LIMIT} ช่องย่อย)`,
+            `โซน ${fullZone.name} เต็มแล้ว (${fullZone.children.cache.size}/${SWEET_ZONE_CHANNEL_LIMIT} ช่องย่อย)`,
+            `สมาชิกที่กำลังใช้งานในโซน: ${activeMembersInFullZone} คน`,
             `ระบบสร้างโซนใหม่ ${newZone.name} ให้อัตโนมัติแล้วครับ`
           ].join("\\n"))
           .setFooter({ text: "ON KING COMMUNITY • Sweet Match" })
