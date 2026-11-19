@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-11-19  
 Repository: `ooy39085-ops/ON-KING-BOT`  
-Working branch: `codex/onking-dashboard-api-2026-11-19`
+Working branch: `codex/onking-bot-center-contract-fix-2026-11-19`
 
 This document records the agreed scope so future code changes preserve existing work and do not silently change the architecture.
 
@@ -42,9 +42,9 @@ These are source-level observations, not claims that a live bot is currently run
 
 ## 3. Integration work still to verify
 
-1. **Host/API address** — confirm Hostrix's actual public route and port mapping before setting the website `botApiUrl`. A domain name alone does not prove that the API path is routed to this process.
-2. **Website application ID** — configure the Discord Application ID in the website only after verifying the correct application. Never put the bot token in frontend code.
-3. **CORS** — set `DASHBOARD_ORIGINS` to the exact production website origin(s); avoid wildcard origins.
+1. **Production website origin (verified from owner)** — `https://onking1510u.netlify.app` (the member page is `/member.html`). The API now allows this exact origin by default; additional origins can be added through comma-separated `DASHBOARD_ORIGINS`. No wildcard CORS is used.
+2. **Host/API address (not yet live-verified)** — the website config currently points to `https://onking-bot.hostrix.website`. Confirm that Hostrix routes this domain to the Node API and maps its assigned port correctly; the website URL alone cannot prove API routing.
+3. **Website application ID** — configure the Discord Application ID in the website only after verifying the correct application. The current website config has `botClientId` blank. Never put the bot token in frontend code.
 4. **Authorization** — test Owner, Admin, and ordinary-member denial when live testing is approved. Keep the API's server-side Supabase session and `user_roles` checks.
 5. **Discord permissions** — verify bot permissions and selected guild/channel behavior using a controlled test after approval.
 6. **API resilience** — review rate limiting, request-size handling, readiness behavior, and useful error responses before exposing the API publicly.
@@ -76,4 +76,4 @@ npm run check
 
 ## 6. Important current limitation
 
-The current Dashboard API is started by `startDashboardApi(client)` inside `index.js`, immediately before `client.login(token)`. This means starting the current process for a live API test also attempts to log the bot in to Discord. There is not yet a verified independent API-only mode. Do not start it merely to test `/health`; design and review an isolated API mode first, or wait for explicit approval to bring the bot online.
+The production website origin `https://onking1510u.netlify.app` is included in the API's exact CORS allowlist. The API domain and Hostrix routing still require live verification. The current Dashboard API is started by `startDashboardApi(client)` inside `index.js`, immediately before `client.login(token)`. This means starting the current process for a live API test also attempts to log the bot in to Discord. There is not yet a verified independent API-only mode. Do not start it merely to test `/health`; design and review an isolated API mode first, or wait for explicit approval to bring the bot online.
