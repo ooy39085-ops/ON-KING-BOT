@@ -1,7 +1,10 @@
 "use strict";
 
 const http = require("node:http");
+const fs = require("node:fs");
+const path = require("node:path");
 const { URL } = require("node:url");
+const CARD_SETTINGS_FILE = path.join(process.cwd(), "on-king-card-settings.json");
 
 const PORT = Number(process.env.PORT || 8080);
 const SUPABASE_URL = (process.env.SUPABASE_URL || "https://alfaddeavpefqobspvxt.supabase.co").replace(/\/$/, "");
@@ -117,6 +120,52 @@ async function getAuthenticatedAdmin(request) {
   return { user, role };
 }
 
+async function getDiscordLinkedUser(request) {
+  if (!SUPABASE_KEY) { const e = new Error("ยังไม่ได้ตั้งค่า Supabase publishable/anon key บน Hostrix"); e.status = 503; throw e; }
+  const match = String(request.headers.authorization || "").match(/^Bearer\\s+(.+)$/i);
+  if (!match) { const e = new Error("กรุณาเข้าสู่ระบบเว็บไซต์ก่อน"); e.status = 401; throw e; }
+  const accessToken = match[1];
+  const userResponse = await fetch(SUPABASE_URL + "/auth/v1/user", { headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + accessToken } });
+  if (!userResponse.ok) { const e = new Error("เซสชันเว็บไซต์หมดอายุ กรุณาเข้าสู่ระบบใหม่"); e.status = 401; throw e; }
+  const user = await userResponse.json();
+  const discordToken = String(request.headers["x-discord-access-token"] || "");
+  if (!discordToken) { const e = new Error("กรุณาเชื่อมบัญชี Discord และอนุญาตสิทธิ์ดูรายชื่อเซิร์ฟเวอร์"); e.status = 401; throw e; }
+  const meResponse = await fetch("https://discord.com/api/v10/users/@me", { headers: { Authorization: "Bearer " + discordToken } });
+  if (!meResponse.ok) { const e = new Error("โทเคน Discord หมดอายุหรือไม่ถูกต้อง กรุณาเชื่อม Discord ใหม่"); e.status = 401; throw e; }
+  const discordMe = await meResponse.json();
+  const identities = Array.isArray(user.identities) ? user.identities : [];
+  const linked = identities.some(identity => identity.provider === "discord" && [identity.id, identity.identity_data?.sub, identity.identity_data?.provider_id, identity.identity_data?.id].some(value => String(value || "") === String(discordMe.id)));
+  if (!linked) { const e = new Error("บัญชี Discord นี้ยังไม่ได้เชื่อมกับบัญชีเว็บไซต์ ON KING"); e.status = 403; throw e; }
+  const guildResponse = await fetch("https://discord.com/api/v10/users/@me/guilds", { headers: { Authorization: "Bearer " + discordToken } });
+  if (!guildResponse.ok) { const e = new Error("ไม่สามารถอ่านรายชื่อเซิร์ฟเวอร์ Discord ได้"); e.status = 403; throw e; }
+  const guilds = await guildResponse.json();
+  return { user, discordMe, guilds: Array.isArray(guilds) ? guilds : [] };
+}
+async function requireDiscordGuildOwner(request, client, guildId) {
+  const actor = await getDiscordLinkedUser(request);
+  const guild = actor.guilds.find(item => item.id === String(guildId));
+  if (!guild || guild.owner !== true) { const e = new Error("เฉพาะเจ้าของเซิร์ฟเวอร์ Discord เท่านั้นที่แต่งการ์ดของเซิร์ฟเวอร์นี้ได้"); e.status = 403; throw e; }
+  const botGuild = client.guilds.cache.get(String(guildId));
+  if (!botGuild) { const e = new Error("ยังไม่พบ ON KING BOT ในเซิร์ฟเวอร์นี้ กรุณาเพิ่มบอทก่อน"); e.status = 404; throw e; }
+  return { ...actor, botGuild };
+}
+function readAllCardSettings() {
+  try { const value = JSON.parse(fs.readFileSync(CARD_SETTINGS_FILE, "utf8")); return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+  catch { return {}; }
+}
+function sanitizeCardSettings(input) {
+  const allowedText = ["coupleTitle","coupleMessage","coupleFooter","divorceTitle","divorceMessage","divorceFooter"];
+  const out = {};
+  for (const key of allowedText) if (input[key] !== undefined) out[key] = String(input[key]).trim().slice(0, key.endsWith("Title") ? 48 : 100);
+  const allowedColors = ["accent","coupleBackground1","coupleBackground2","divorceBackground1","divorceBackground2"];
+  for (const key of allowedColors) if (input[key] !== undefined && /^#[0-9a-f]{6}$/i.test(String(input[key]))) out[key] = String(input[key]);
+  return out;
+}
+function saveAllCardSettings(settings) {
+  const temp = CARD_SETTINGS_FILE + ".tmp";
+  fs.writeFileSync(temp, JSON.stringify(settings, null, 2), "utf8");
+  fs.renameSync(temp, CARD_SETTINGS_FILE);
+}
 function getGuild(client, guildId) {
   if (!guildId) {
     const error = new Error("กรุณาระบุ guildId");
@@ -142,7 +191,7 @@ async function handleRequest(request, response, client) {
     response.writeHead(204, {
       ...(allowedOrigin ? { "Access-Control-Allow-Origin": allowedOrigin, "Vary": "Origin" } : {}),
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Discord-Access-Token",
       "Access-Control-Max-Age": "600"
     });
     return response.end();
@@ -153,6 +202,35 @@ async function handleRequest(request, response, client) {
       ok: true, api: "ON KING Dashboard API", discordReady: Boolean(client.isReady()),
       timestamp: new Date().toISOString()
     }, allowedOrigin);
+  }
+
+  if (request.method === "GET" && requestUrl.pathname === "/api/card-guilds") {
+    try {
+      const actor = await getDiscordLinkedUser(request);
+      const owned = actor.guilds.filter(guild => guild.owner === true && client.guilds.cache.has(guild.id))
+        .map(guild => ({ id: guild.id, name: guild.name, icon: guild.icon, memberCount: guild.approximate_member_count || null }));
+      return sendJson(response, 200, { ok: true, guilds: owned }, allowedOrigin);
+    } catch (error) { return sendJson(response, Number(error.status) || 500, { error: error.message }, allowedOrigin); }
+  }
+  if (request.method === "GET" && requestUrl.pathname === "/api/card-settings") {
+    try {
+      const guildId = requestUrl.searchParams.get("guildId");
+      await requireDiscordGuildOwner(request, client, guildId);
+      const settings = readAllCardSettings()[guildId] || {};
+      return sendJson(response, 200, { ok: true, settings }, allowedOrigin);
+    } catch (error) { return sendJson(response, Number(error.status) || 500, { error: error.message }, allowedOrigin); }
+  }
+  if (request.method === "POST" && requestUrl.pathname === "/api/card-settings") {
+    try {
+      const body = await readJson(request);
+      const guildId = String(body.guildId || "");
+      const actor = await requireDiscordGuildOwner(request, client, guildId);
+      enforceMutationLimit(request, actor.user.id);
+      const settings = readAllCardSettings();
+      settings[guildId] = { ...(settings[guildId] || {}), ...sanitizeCardSettings(body.settings || {}), updatedAt: new Date().toISOString() };
+      saveAllCardSettings(settings);
+      return sendJson(response, 200, { ok: true, settings: settings[guildId], message: "บันทึกธีมการ์ดของเซิร์ฟเวอร์นี้เรียบร้อยแล้ว" }, allowedOrigin);
+    } catch (error) { return sendJson(response, Number(error.status) || 500, { error: error.message }, allowedOrigin); }
   }
 
   try {

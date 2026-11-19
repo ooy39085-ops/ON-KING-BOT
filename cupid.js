@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { SlashCommandBuilder, ChannelType, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, UserSelectMenuBuilder } = require("discord.js");
+const { renderRelationshipCard } = require("./card-renderer");
 const FILE = path.join(process.cwd(), "on-king-cupid-data.json");
 const TTL = 3600000, INTERVAL = 30000;
 let clientRef;
@@ -25,17 +26,7 @@ for (const req of data.pending) {
 function save() { const tmp = FILE + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(data, null, 2)); fs.renameSync(tmp, FILE); }
 function coupleFor(gid, uid) { return data.couples.find(c => c.guildId === gid && (c.user1 === uid || c.user2 === uid)); }
 function remaining(ts) { const ms = Math.max(0, ts - Date.now()); return Math.floor(ms / 60000) + " นาที " + Math.floor(ms % 60000 / 1000) + " วินาที"; }
-function card(c, ended) {
-  const a = clientRef.users.cache.get(c.user1), b = clientRef.users.cache.get(c.user2);
-  const embed = new EmbedBuilder().setColor(ended ? 0x777777 : 0xD4AF37)
-    .setTitle(ended ? "ON KING CUPID • RELATIONSHIP ENDED" : "💍 ON KING COUPLE")
-    .setDescription(ended ? "ความสัมพันธ์ของคู่นี้สิ้นสุดลงแล้ว" : "ความรักบทใหม่เริ่มต้นขึ้นแล้วใน ON KING COMMUNITY")
-    .addFields({ name: "สมาชิกคนที่ 1", value: "<@" + c.user1 + ">", inline: true }, { name: "♡", value: "💛", inline: true }, { name: "สมาชิกคนที่ 2", value: "<@" + c.user2 + ">", inline: true }, { name: ended ? "วันที่สิ้นสุด" : "วันที่เริ่มต้น", value: new Date(ended ? c.endedAt : c.createdAt).toLocaleDateString("th-TH", { timeZone: "Asia/Bangkok" }) })
-    .setFooter({ text: "ON KING CUPID • LOVE IN THE KINGDOM" }).setTimestamp(c.createdAt);
-  if (a) embed.setAuthor({ name: a.username, iconURL: a.displayAvatarURL({ extension: "png", size: 256 }) });
-  if (b) embed.setThumbnail(b.displayAvatarURL({ extension: "png", size: 256 }));
-  return embed;
-}
+async function card(c, ended) { return renderRelationshipCard(clientRef, c, ended); }
 function embedFor(r, expired) {
   const marriage = r.type === "marriage";
   return new EmbedBuilder().setColor(expired ? 0x777777 : marriage ? 0xD4AF37 : 0x777777)
@@ -128,7 +119,8 @@ async function complete(r, result) {
     const chId = data.settings[r.guildId]?.marriageAnnouncementChannelId;
     const ch = chId ? await guild.channels.fetch(chId).catch(() => null) : null;
     if (ch && ch.isTextBased()) {
-      const posted = await ch.send({ embeds: [card(relationship, false)] }).catch(() => null);
+      const image = await card(relationship, false);
+      const posted = await ch.send({ files: [{ attachment: image, name: "on-king-couple.png" }] }).catch(() => null);
       if (posted) {
         relationship.cardChannelId = ch.id;
         relationship.cardMessageId = posted.id;
@@ -138,10 +130,10 @@ async function complete(r, result) {
   } else {
     const old = relationship.cardChannelId ? await guild.channels.fetch(relationship.cardChannelId).catch(() => null) : null;
     const oldMsg = old && relationship.cardMessageId ? await old.messages.fetch(relationship.cardMessageId).catch(() => null) : null;
-    if (oldMsg) await oldMsg.edit({ embeds: [card(relationship, true)] }).catch(() => {});
+    if (oldMsg) { const image = await card(relationship, true); await oldMsg.edit({ content: "สถานะความสัมพันธ์สิ้นสุดลงแล้ว", embeds: [], files: [{ attachment: image, name: "on-king-divorce.png" }] }).catch(() => {}); }
     const chId = data.settings[r.guildId]?.divorceAnnouncementChannelId;
     const ch = chId ? await guild.channels.fetch(chId).catch(() => null) : null;
-    if (ch && ch.isTextBased()) await ch.send({ embeds: [card(relationship, true)] }).catch(() => {});
+    if (ch && ch.isTextBased()) { const image = await card(relationship, true); await ch.send({ files: [{ attachment: image, name: "on-king-divorce.png" }] }).catch(() => {}); }
   }
 }
 function schedule(r) {
@@ -216,15 +208,8 @@ async function handle(i) {
       return true;
     }
     const partnerId = c.user1 === target.id ? c.user2 : c.user1;
-    await i.reply({
-      embeds: [new EmbedBuilder().setColor(0xD4AF37).setTitle("💍 ON KING CUPID • ตรวจสอบคู่รัก")
-        .setDescription("<@" + target.id + "> ♡ <@" + partnerId + ">")
-        .addFields({ name: "สมาชิกที่ตรวจสอบ", value: "<@" + target.id + ">", inline: true },
-          { name: "คู่รัก", value: "<@" + partnerId + ">", inline: true },
-          { name: "วันที่เริ่มต้น", value: new Date(c.createdAt).toLocaleDateString("th-TH", { timeZone: "Asia/Bangkok" }) })
-        .setFooter({ text: "ON KING COMMUNITY • LOVE IN THE KINGDOM" }).setTimestamp(c.createdAt)],
-      ephemeral: false
-    });
+    const image = await card(c, false);
+    await i.reply({ content: "💍 <@" + target.id + "> ♡ <@" + partnerId + ">", files: [{ attachment: image, name: "on-king-couple.png" }], ephemeral: false });
     return true;
   }
   if (i.isChatInputCommand() && i.commandName === "cupid-setup") {
