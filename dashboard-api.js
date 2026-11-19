@@ -191,7 +191,7 @@ async function handleRequest(request, response, client) {
     response.writeHead(204, {
       ...(allowedOrigin ? { "Access-Control-Allow-Origin": allowedOrigin, "Vary": "Origin" } : {}),
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Discord-Access-Token",
       "Access-Control-Max-Age": "600"
     });
     return response.end();
