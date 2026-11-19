@@ -1,7 +1,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const { SlashCommandBuilder, ChannelType, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, UserSelectMenuBuilder, AttachmentBuilder } = require("discord.js");
+const { SlashCommandBuilder, ChannelType, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, UserSelectMenuBuilder } = require("discord.js");
 const { renderRelationshipCard } = require("./card-renderer");
 const FILE = path.join(process.cwd(), "on-king-cupid-data.json");
 const TTL = 3600000, INTERVAL = 30000;
