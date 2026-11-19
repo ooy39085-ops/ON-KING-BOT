@@ -229,6 +229,7 @@ async function handle(i) {
   }
   if (i.isChatInputCommand() && i.commandName === "cupid-setup") {
     const c = { marriageRequestChannelId: i.options.getChannel("marriage_request", true), marriageAnnouncementChannelId: i.options.getChannel("marriage_announcement", true), divorceRequestChannelId: i.options.getChannel("divorce_request", true), divorceAnnouncementChannelId: i.options.getChannel("divorce_announcement", true) };
+    if (new Set(Object.values(c).map(ch => ch.id)).size !== 4) { await i.reply({ content: "กรุณาเลือกห้องทั้ง 4 ห้องให้แยกจากกันครับ เพื่อไม่ให้คำขอและประกาศปะปนกัน", ephemeral: true }); return true; }
     const me = await i.guild.members.fetchMe(), needed = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
     if (Object.values(c).some(ch => !ch.permissionsFor(me)?.has(needed))) { await i.reply({ content: "บอทต้องมีสิทธิ์ View Channel, Send Messages และ Embed Links ในทุกห้องครับ", ephemeral: true }); return true; }
     data.settings[i.guildId] = Object.fromEntries(Object.entries(c).map(([k, v]) => [k, v.id])); save();
