@@ -28,7 +28,7 @@ Requires Node.js 20 or later:
 npm run check
 ```
 
-This runs `node --check` on the four JavaScript source files and verifies the CUPID module exports. It does not start the Discord bot or log in to Discord.
+This runs `node --check` on the five JavaScript source files and verifies the CUPID module exports. It does not start the Discord bot or log in to Discord.
 
 ## Configuration
 
