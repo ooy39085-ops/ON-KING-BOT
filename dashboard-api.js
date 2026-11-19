@@ -224,7 +224,8 @@ async function handleRequest(request, response, client) {
     try {
       const body = await readJson(request);
       const guildId = String(body.guildId || "");
-      await requireDiscordGuildOwner(request, client, guildId);
+      const actor = await requireDiscordGuildOwner(request, client, guildId);
+      enforceMutationLimit(request, actor.user.id);
       const settings = readAllCardSettings();
       settings[guildId] = { ...(settings[guildId] || {}), ...sanitizeCardSettings(body.settings || {}), updatedAt: new Date().toISOString() };
       saveAllCardSettings(settings);
