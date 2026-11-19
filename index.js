@@ -20,85 +20,13 @@ const {
 const { restoreVoicePresence, setPermanentVoiceChannel } = require("./voice-presence");
 const { musicCommands, handleMusicInteraction } = require("./music");
 const { startDashboardApi } = require("./dashboard-api");
+const cupid = require("./cupid");
 const token = process.env.DISCORD_BOT_TOKEN;
 const syncSecret = process.env.DISCORD_SYNC_SECRET;
 const supabaseUrl = (process.env.SUPABASE_URL || "https://alfaddeavpefqobspvxt.supabase.co").replace(/\/$/, "");
 const syncUrl = `${supabaseUrl}/functions/v1/discord-member-sync`;
 const CONFIG_PATH = path.join(process.cwd(), "sweet-match-config.json");
 const SEARCH_TIMEOUT_MS = 3 * 60 * 1000;
-const CUPID_DATA_PATH = path.join(process.cwd(), "on-king-cupid-data.json");
-
-if (!token) {
-  console.error("ไม่พบ DISCORD_BOT_TOKEN ใน Environment Variables");
-  process.exit(1);
-}
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildVoiceStates
-  ]
-});
-
-// Sweet Match settings are stored locally on the bot host. No website or Supabase
-// schema is used by this feature.
-let sweetSettings = {};
-try {
-  if (fs.existsSync(CONFIG_PATH)) {
-    sweetSettings = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-  }
-} catch (error) {
-  console.error("อ่านไฟล์ตั้งค่า Sweet Match ไม่สำเร็จ:", error.message);
-  sweetSettings = {};
-}
-
-// ON KING CUPID data is stored separately from Sweet Match and Supabase.
-let cupidData = { settings: {}, couples: [], pending: [] };
-try {
-  if (fs.existsSync(CUPID_DATA_PATH)) {
-    const saved = JSON.parse(fs.readFileSync(CUPID_DATA_PATH, "utf8"));
-    cupidData = {
-      settings: saved.settings || {},
-      couples: Array.isArray(saved.couples) ? saved.couples : [],
-      pending: Array.isArray(saved.pending) ? saved.pending : []
-    };
-  }
-} catch (error) {
-  console.error("อ่านข้อมูล ON KING CUPID ไม่สำเร็จ:", error.message);
-}
-function saveCupidData() {
-  const tempPath = `${CUPID_DATA_PATH}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(cupidData, null, 2), "utf8");
-  fs.renameSync(tempPath, CUPID_DATA_PATH);
-}
-function findCupidCouple(guildId, userId) {
-  return cupidData.couples.find(c => c.guildId === guildId && (c.user1 === userId || c.user2 === userId));
-}
-function cupidDate(timestamp) {
-  return new Date(timestamp).toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Bangkok" });
-}
-function createCupidCard(couple, ended = false) {
-  const first = client.users.cache.get(couple.user1);
-  const second = client.users.cache.get(couple.user2);
-  const firstAvatar = first?.displayAvatarURL({ extension: "png", size: 256 });
-  const secondAvatar = second?.displayAvatarURL({ extension: "png", size: 256 });
-  const embed = new EmbedBuilder()
-    .setColor(ended ? 0x777777 : 0xD4AF37)
-    .setTitle(ended ? "ON KING COUPLE • ENDED" : "💍 ON KING COUPLE")
-    .setDescription(ended ? "ความสัมพันธ์ของคู่นี้สิ้นสุดลงแล้ว" : "ความรักบทใหม่เริ่มต้นขึ้นแล้วใน ON KING COMMUNITY")
-    .addFields(
-      { name: "สมาชิกคนที่ 1", value: `<@${couple.user1}>`, inline: true },
-      { name: "♡", value: "💛", inline: true },
-      { name: "สมาชิกคนที่ 2", value: `<@${couple.user2}>`, inline: true },
-      { name: ended ? "วันที่สิ้นสุด" : "วันที่เริ่มต้น", value: cupidDate(ended ? (couple.endedAt || Date.now()) : couple.createdAt), inline: false }
-    )
-    .setFooter({ text: "ON KING CUPID • LOVE IN THE KINGDOM" })
-    .setTimestamp(couple.createdAt);
-  if (firstAvatar) embed.setAuthor({ name: first?.username || "สมาชิก ON KING", iconURL: firstAvatar });
-  if (secondAvatar) embed.setThumbnail(secondAvatar);
-  return embed;
-}
 const searchQueues = new Map();       // guildId -> [{ userId, gender, preference, interaction, timer }]
 const selections = new Map();         // userId -> { gender, preference }
 const activeMatches = new Map();      // voiceChannelId -> { guildId, userIds, ended }
@@ -228,17 +156,9 @@ function selectionComponents(userId, selection = {}) {
     .setPlaceholder("เลือกเพศที่ต้องการพบ")
     .addOptions(preferenceOptions);
 
-  const ready = Boolean(selection.gender && selection.preference);
-  const submit = new ButtonBuilder()
-    .setCustomId("sm_submit")
-    .setLabel("เริ่มค้นหาคู่")
-    .setStyle(ButtonStyle.Success)
-    .setDisabled(!ready);
-
   return [
     new ActionRowBuilder().addComponents(genderMenu),
-    new ActionRowBuilder().addComponents(preferenceMenu),
-    new ActionRowBuilder().addComponents(submit)
+    new ActionRowBuilder().addComponents(preferenceMenu)
   ];
 }
 
@@ -247,7 +167,7 @@ function createPanelEmbed() {
     .setColor(0xD4AF37)
     .setTitle("👑 ON KING SWEET MATCH")
     .setDescription([
-      "กดปุ่มด้านล่างเพื่อเริ่มค้นหาคนที่ต้องการพูดคุย",
+      "เลือกเพศของตัวเองและเพศที่ต้องการพบก่อน แล้วเข้าห้องเสียงเพื่อเริ่มค้นหาอัตโนมัติ",
       "",
       "• เลือกเพศของตัวเองและเพศที่ต้องการพบ",
       "• ระบบจับคู่เมื่อเงื่อนไขตรงกันทั้งสองฝ่าย",
@@ -255,7 +175,7 @@ function createPanelEmbed() {
       "• เมื่อพบคู่ จะสร้างห้องเสียงส่วนตัวให้คุยได้ไม่จำกัดเวลา",
       "• หากฝ่ายใดออกจากห้อง ระบบจะแจ้งอีกฝ่ายและปิดห้อง",
       "",
-      "หมายเหตุ: กรุณาเข้าห้องเสียงใดก็ได้ก่อนเริ่มค้นหา เพื่อให้บอทย้ายคุณไปยังห้องคู่ได้"
+      "หมายเหตุ: กรุณาเข้าห้องเสียงรอจับคู่ที่แอดมินกำหนดไว้ เพื่อเริ่มค้นหาอัตโนมัติ"
     ].join("\n"))
     .setFooter({ text: "ON KING COMMUNITY • Sweet Match" });
 }
@@ -304,7 +224,7 @@ async function removeFromQueue(guildId, userId) {
   const index = queue.findIndex(entry => entry.userId === userId);
   if (index < 0) return null;
   const [entry] = queue.splice(index, 1);
-  clearTimeout(entry.timer);
+  clearInterval(entry.timer);
   return entry;
 }
 
@@ -349,7 +269,7 @@ async function tryMatch(guild, newEntry) {
   if (partnerIndex < 0) return false;
 
   const [partner] = queue.splice(partnerIndex, 1);
-  clearTimeout(partner.timer);
+  clearInterval(partner.timer);
   const current = await removeFromQueue(guild.id, newEntry.userId);
   if (!current) {
     queue.push(partner);
@@ -359,8 +279,11 @@ async function tryMatch(guild, newEntry) {
   const firstMember = await guild.members.fetch(current.userId).catch(() => null);
   const secondMember = await guild.members.fetch(partner.userId).catch(() => null);
 
-  if (!firstMember || !secondMember || !firstMember.voice.channel || !secondMember.voice.channel) {
-    const message = "การจับคู่ยกเลิก เพราะสมาชิกคนใดคนหนึ่งไม่ได้อยู่ในห้องเสียงแล้ว กรุณาเข้าห้องเสียงและเริ่มใหม่";
+  const waitingVoiceChannelId = sweetSettings[guild.id]?.waitingVoiceChannelId;
+  if (!firstMember || !secondMember ||
+      firstMember.voice.channelId !== waitingVoiceChannelId ||
+      secondMember.voice.channelId !== waitingVoiceChannelId) {
+    const message = "การจับคู่ยกเลิก เพราะสมาชิกคนใดคนหนึ่งออกจากห้องเสียงรอจับคู่ กรุณากลับเข้าห้องรอแล้วเริ่มใหม่";
     await current.interaction.editReply({ content: message, components: [] }).catch(() => {});
     await partner.interaction.editReply({ content: message, components: [] }).catch(() => {});
     return true;
@@ -465,9 +388,14 @@ async function beginSearch(interaction, selection) {
     return;
   }
   const searchingMember = await guild.members.fetch(interaction.user.id).catch(() => null);
-  if (!searchingMember?.voice?.channelId) {
+  const waitingVoiceChannelId = sweetSettings[guild.id]?.waitingVoiceChannelId;
+  if (!waitingVoiceChannelId) {
+    await interaction.editReply({ content: "แอดมินยังไม่ได้ตั้งค่าห้องเสียงรอจับคู่ กรุณาใช้ /sweetmatch setup ก่อนครับ", components: [] });
+    return;
+  }
+  if (searchingMember?.voice?.channelId !== waitingVoiceChannelId) {
     await interaction.editReply({
-      content: "กรุณาเข้าห้องเสียงใดก็ได้ในเซิร์ฟเวอร์ก่อน แล้วกดเริ่มค้นหาอีกครั้งครับ",
+      content: "กรุณาเข้าห้องเสียงรอจับคู่ ON KING SWEET MATCH ที่แอดมินกำหนดไว้ก่อนครับ",
       components: []
     });
     return;
@@ -493,26 +421,39 @@ async function beginSearch(interaction, selection) {
 
   const queue = getQueue(guild.id);
   queue.push(entry);
+  entry.expiresAt = Date.now() + SEARCH_TIMEOUT_MS;
+  const cancelRow = () => [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("sm_cancel")
+        .setLabel("ยกเลิกการค้นหา")
+        .setStyle(ButtonStyle.Danger)
+    )
+  ];
   await interaction.editReply({
-    content: "🔎 กำลังค้นหาคู่ที่ตรงกันทั้งสองฝ่าย... ระบบจะยกเลิกอัตโนมัติเมื่อครบ 3 นาที",
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("sm_cancel")
-          .setLabel("ยกเลิกการค้นหา")
-          .setStyle(ButtonStyle.Danger)
-      )
-    ]
+    content: "🔎 กำลังค้นหาคู่ที่ตรงกันทั้งสองฝ่าย... เหลือเวลา 3:00 นาที",
+    components: cancelRow()
   });
 
-  entry.timer = setTimeout(async () => {
-    const removed = await removeFromQueue(guild.id, entry.userId);
-    if (!removed) return;
+  entry.timer = setInterval(async () => {
+    const remaining = Math.max(0, entry.expiresAt - Date.now());
+    if (remaining <= 0) {
+      clearInterval(entry.timer);
+      const removed = await removeFromQueue(guild.id, entry.userId);
+      if (!removed) return;
+      await entry.interaction.editReply({
+        content: "⌛ ครบ 3 นาทีแล้วยังไม่พบคู่ที่ตรงกัน ระบบยกเลิกการค้นหาให้แล้วครับ",
+        components: []
+      }).catch(() => {});
+      return;
+    }
+    const minutes = Math.floor(remaining / 60000);
+    const seconds = Math.floor((remaining % 60000) / 1000);
     await entry.interaction.editReply({
-      content: "⌛ ครบ 3 นาทีแล้วยังไม่พบคู่ที่ตรงกัน ระบบยกเลิกการค้นหาให้แล้วครับ",
-      components: []
+      content: "🔎 กำลังค้นหาคู่ที่ตรงกันทั้งสองฝ่าย... เหลือเวลา " + minutes + ":" + String(seconds).padStart(2, "0") + " นาที",
+      components: cancelRow()
     }).catch(() => {});
-  }, SEARCH_TIMEOUT_MS);
+  }, 10000);
 
   await tryMatch(guild, entry);
 }
@@ -559,6 +500,13 @@ const commands = [
             .addChannelTypes(ChannelType.GuildCategory)
             .setRequired(true)
         )
+        .addChannelOption(option =>
+          option
+            .setName("waiting_voice")
+            .setDescription("ห้องเสียงรอจับคู่ สมาชิกเข้าห้องนี้เพื่อเริ่มค้นหาอัตโนมัติ")
+            .addChannelTypes(ChannelType.GuildVoice)
+            .setRequired(true)
+        )
     )
     .addSubcommand(subcommand =>
       subcommand
@@ -566,31 +514,7 @@ const commands = [
         .setDescription("ส่งแผงปุ่มเริ่มจับคู่ไปยังห้องที่ตั้งค่าไว้")
     )
     .toJSON(),
-  new SlashCommandBuilder()
-    .setName("breakup")
-    .setNameLocalizations({ th: "เลิก" })
-    .setDescription("ยุติสถานะคู่รักกับสมาชิกที่ระบุ")
-    .addUserOption(o => o.setName("member").setNameLocalizations({ th: "สมาชิก" }).setDescription("เลือกคู่รักของคุณ").setRequired(true))
-    .toJSON(),
-  new SlashCommandBuilder()
-    .setName("checkcouple")
-    .setNameLocalizations({ th: "เช็คคู่รัก" })
-    .setDescription("ตรวจสอบคู่รักและวันเริ่มต้นความสัมพันธ์")
-    .addUserOption(o => o.setName("member").setNameLocalizations({ th: "สมาชิก" }).setDescription("สมาชิกที่ต้องการตรวจสอบ").setRequired(true))
-    .toJSON(),
-  new SlashCommandBuilder()
-    .setName("marriage")
-    .setNameLocalizations({ th: "แต่งงาน" })
-    .setDescription("ระบบขอเป็นแฟนและการ์ดคู่รัก ON KING CUPID")
-    .addSubcommand(s => s.setName("setup").setDescription("ตั้งค่าห้องขอเป็นแฟน ห้องการ์ดคู่รัก และห้องแจ้งหย่าร้าง")
-      .addChannelOption(o => o.setName("request_channel").setDescription("ห้องสำหรับใช้คำสั่งขอเป็นแฟน").addChannelTypes(ChannelType.GuildText).setRequired(true))
-      .addChannelOption(o => o.setName("card_channel").setDescription("ห้องสำหรับแสดงการ์ดคู่รัก").addChannelTypes(ChannelType.GuildText).setRequired(true))
-      .addChannelOption(o => o.setName("breakup_channel").setDescription("ห้องสำหรับแจ้งการหย่าร้าง").addChannelTypes(ChannelType.GuildText).setRequired(true)))
-    .addSubcommand(s => s.setName("request").setDescription("ส่งคำขอเป็นแฟนให้สมาชิกที่เลือก")
-      .addUserOption(o => o.setName("member").setDescription("สมาชิกที่ต้องการขอเป็นแฟน").setRequired(true)))
-    .addSubcommand(s => s.setName("status").setDescription("ตรวจสอบสถานะคู่รัก")
-      .addUserOption(o => o.setName("member").setDescription("สมาชิกที่ต้องการตรวจสอบ").setRequired(false)))
-    .toJSON(),
+  ...cupid.commands,
   ...musicCommands
 ];
 
@@ -703,6 +627,7 @@ async function syncAllGuildMembers(guild) {
 }
 
 client.once(Events.ClientReady, async (readyClient) => {
+  await cupid.restore(readyClient);
   console.log(`ON KING BOT ONLINE: ${readyClient.user.tag}`);
 
   readyClient.user.setPresence({
@@ -785,6 +710,7 @@ client.on(Events.GuildMemberRemove, async (member) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (await cupid.handle(interaction)) return;
 
     if (interaction.isChatInputCommand()) {
       const musicHandled = await handleMusicInteraction(interaction);
@@ -815,168 +741,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         return;
       }
-
-
-
-      if (interaction.commandName === "breakup" || interaction.commandName === "เลิก") {
-        const target = interaction.options.getUser("member", true);
-        if (target.bot || target.id === interaction.user.id) {
-          await interaction.reply({ content: "กรุณาเลือกคู่รักของคุณ ไม่สามารถเลือกตัวเองหรือบอทได้ครับ", ephemeral: true });
-          return;
-        }
-        const index = cupidData.couples.findIndex(c =>
-          c.guildId === interaction.guildId &&
-          ((c.user1 === interaction.user.id && c.user2 === target.id) ||
-           (c.user2 === interaction.user.id && c.user1 === target.id))
-        );
-        if (index < 0) {
-          await interaction.reply({ content: "ไม่พบสถานะคู่รักระหว่างคุณกับสมาชิกที่เลือกครับ คุณสามารถเลิกได้เฉพาะคู่รักของตัวเองเท่านั้น", ephemeral: true });
-          return;
-        }
-        const couple = cupidData.couples[index];
-        couple.endedAt = Date.now();
-        cupidData.couples.splice(index, 1);
-        saveCupidData();
-
-        const cardChannel = couple.cardChannelId
-          ? interaction.guild.channels.cache.get(couple.cardChannelId) || await interaction.guild.channels.fetch(couple.cardChannelId).catch(() => null)
-          : null;
-        if (cardChannel && couple.cardMessageId) {
-          const cardMessage = await cardChannel.messages.fetch(couple.cardMessageId).catch(() => null);
-          if (cardMessage) await cardMessage.edit({ embeds: [createCupidCard(couple, true)] }).catch(error => console.error("อัปเดตการ์ดคู่รักหลังเลิกไม่สำเร็จ:", error));
-        }
-
-        const breakupEmbed = new EmbedBuilder()
-          .setColor(0x777777)
-          .setTitle("🖤 ON KING CUPID • แจ้งสิ้นสุดความสัมพันธ์")
-          .setDescription(`<@${interaction.user.id}> และ <@${target.id}> ได้สิ้นสุดสถานะคู่รักแล้วครับ`)
-          .addFields({ name: "วันที่สิ้นสุด", value: cupidDate(couple.endedAt), inline: false })
-          .setFooter({ text: "ON KING COMMUNITY • LOVE IN THE KINGDOM" })
-          .setTimestamp(couple.endedAt);
-        const breakupChannelId = cupidData.settings[interaction.guildId]?.breakupChannelId;
-        const breakupChannel = breakupChannelId
-          ? interaction.guild.channels.cache.get(breakupChannelId) || await interaction.guild.channels.fetch(breakupChannelId).catch(() => null)
-          : null;
-        if (breakupChannel?.isTextBased()) {
-          await breakupChannel.send({ embeds: [breakupEmbed] });
-          await interaction.reply({ content: `แจ้งการสิ้นสุดความสัมพันธ์ในห้อง ${breakupChannel} แล้วครับ และอัปเดตการ์ดคู่รักเดิมเรียบร้อย`, ephemeral: true });
-        } else {
-          await interaction.reply({ content: "ยังไม่ได้ตั้งค่าห้องแจ้งเตือนหย่าร้าง กรุณาให้แอดมินใช้ /แต่งงาน setup ตั้งค่าห้องก่อนครับ", ephemeral: true });
-        }
-        return;
-      }
-
-      if (interaction.commandName === "checkcouple" || interaction.commandName === "เช็คคู่รัก") {
-        const target = interaction.options.getUser("member", true);
-        const couple = findCupidCouple(interaction.guildId, target.id);
-        if (!couple) {
-          await interaction.reply({
-            content: `💛 <@${target.id}> ยังไม่มีคู่รักในระบบ ON KING CUPID ครับ`,
-            ephemeral: true
-          });
-          return;
-        }
-
-        const partnerId = couple.user1 === target.id ? couple.user2 : couple.user1;
-        const targetMember = await interaction.guild.members.fetch(target.id).catch(() => null);
-        const partnerMember = await interaction.guild.members.fetch(partnerId).catch(() => null);
-        const targetName = targetMember?.displayName || target.username;
-        const partnerName = partnerMember?.displayName || (await client.users.fetch(partnerId).catch(() => null))?.username || "สมาชิก ON KING";
-        const embed = new EmbedBuilder()
-          .setColor(0xD4AF37)
-          .setTitle("💍 ON KING CUPID • ตรวจสอบคู่รัก")
-          .setDescription(`**${targetName}** ♡ **${partnerName}**`)
-          .addFields(
-            { name: "สมาชิกที่ค้นหา", value: `<@${target.id}>`, inline: true },
-            { name: "คู่รัก", value: `<@${partnerId}>`, inline: true },
-            { name: "วันแต่งงาน", value: cupidDate(couple.createdAt), inline: false }
-          )
-          .setFooter({ text: "ON KING COMMUNITY • LOVE IN THE KINGDOM" })
-          .setTimestamp(couple.createdAt);
-
-        await interaction.reply({ embeds: [embed], ephemeral: false });
-        return;
-      }
-
-      if (interaction.commandName === "marriage" || interaction.commandName === "แต่งงาน") {
-        const subcommand = interaction.options.getSubcommand();
-        const settings = cupidData.settings[interaction.guildId] || {};
-        if (subcommand === "setup") {
-          if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
-            await interaction.reply({ content: "คำสั่งตั้งค่านี้สำหรับแอดมินที่มีสิทธิ์ Manage Server เท่านั้นครับ", ephemeral: true }); return;
-          }
-          const requestChannel = interaction.options.getChannel("request_channel");
-          const cardChannel = interaction.options.getChannel("card_channel");
-          const breakupChannel = interaction.options.getChannel("breakup_channel");
-          const selectedChannelIds = [requestChannel.id, cardChannel.id, breakupChannel.id];
-          if (new Set(selectedChannelIds).size !== selectedChannelIds.length) {
-            await interaction.reply({ content: "กรุณาเลือกห้องทั้ง 3 ห้องไม่ให้ซ้ำกันครับ", ephemeral: true }); return;
-          }
-          const me = await interaction.guild.members.fetchMe();
-          const needed = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
-          if (![requestChannel, cardChannel, breakupChannel].every(channel => channel.permissionsFor(me)?.has(needed))) {
-            await interaction.reply({ content: "บอทต้องมีสิทธิ์ View Channel, Send Messages และ Embed Links ในห้องทั้ง 3 ครับ", ephemeral: true }); return;
-          }
-          cupidData.settings[interaction.guildId] = {
-            requestChannelId: requestChannel.id,
-            cardChannelId: cardChannel.id,
-            breakupChannelId: breakupChannel.id
-          };
-          try { saveCupidData(); } catch (error) {
-            console.error("บันทึกการตั้งค่า ON KING CUPID ไม่สำเร็จ:", error);
-            await interaction.reply({ content: "บันทึกการตั้งค่าไม่ได้ กรุณาตรวจสอบสิทธิ์เขียนไฟล์ของ Hostrix ครับ", ephemeral: true }); return;
-          }
-          await interaction.reply({ content: `ตั้งค่า ON KING CUPID สำเร็จแล้วครับ\nห้องขอเป็นแฟน: ${requestChannel}\nห้องแต่งงาน/การ์ดคู่รัก: ${cardChannel}\nห้องแจ้งเตือนหย่าร้าง: ${breakupChannel}`, ephemeral: true }); return;
-        }
-        if (subcommand === "request") {
-          if (!settings.requestChannelId) {
-            await interaction.reply({ content: "แอดมินยังไม่ได้ตั้งค่าระบบ ใช้ /แต่งงาน setup ก่อนครับ", ephemeral: true }); return;
-          }
-          if (interaction.channelId !== settings.requestChannelId) {
-            await interaction.reply({ content: "กรุณาใช้คำสั่งนี้ในห้องขอเป็นแฟนที่กำหนดไว้ครับ", ephemeral: true }); return;
-          }
-          const target = interaction.options.getUser("member", true);
-          if (target.bot || target.id === interaction.user.id) {
-            await interaction.reply({ content: "ไม่สามารถเลือกตัวเองหรือบอทเป็นคู่รักได้ครับ", ephemeral: true }); return;
-          }
-          if (findCupidCouple(interaction.guildId, interaction.user.id) || findCupidCouple(interaction.guildId, target.id)) {
-            await interaction.reply({ content: "คุณหรือสมาชิกที่เลือกมีคู่รักอยู่แล้วครับ", ephemeral: true }); return;
-          }
-          const busy = cupidData.pending.some(p => p.guildId === interaction.guildId && [p.fromId, p.toId].some(id => id === interaction.user.id || id === target.id));
-          if (busy) { await interaction.reply({ content: "คุณหรือสมาชิกที่เลือกมีคำขอที่กำลังรอการตอบรับอยู่แล้วครับ", ephemeral: true }); return; }
-          const requestId = `${Date.now()}-${interaction.user.id.slice(-5)}`;
-          const request = { id: requestId, guildId: interaction.guildId, fromId: interaction.user.id, toId: target.id, createdAt: Date.now() };
-          const requestEmbed = new EmbedBuilder().setColor(0xD4AF37).setTitle("💌 ON KING CUPID • คำขอเป็นแฟน")
-            .setDescription(`<@${interaction.user.id}> กำลังขอเป็นแฟนกับ <@${target.id}>\n\nมีเพียงสมาชิกที่ถูกขอเท่านั้นที่สามารถตอบรับหรือปฏิเสธได้ครับ`)
-            .setFooter({ text: "ON KING CUPID • LOVE IN THE KINGDOM" }).setTimestamp();
-          const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`cupid_accept:${requestId}`).setLabel("ตอบรับ").setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`cupid_decline:${requestId}`).setLabel("ปฏิเสธ").setStyle(ButtonStyle.Danger)
-          );
-          const message = await interaction.channel.send({ content: `<@${target.id}>`, embeds: [requestEmbed], components: [row] });
-          request.messageId = message.id; request.channelId = message.channelId; cupidData.pending.push(request);
-          try { saveCupidData(); } catch (error) { await message.delete().catch(() => {}); throw error; }
-          await interaction.reply({ content: `ส่งคำขอเป็นแฟนไปยัง ${target} แล้วครับ รออีกฝ่ายตอบรับได้เลย 💛`, ephemeral: true }); return;
-        }
-        if (subcommand === "status") {
-          const target = interaction.options.getUser("member") || interaction.user;
-          const couple = findCupidCouple(interaction.guildId, target.id);
-          if (!couple) { await interaction.reply({ content: `${target.id === interaction.user.id ? "คุณ" : target.username} ยังไม่มีสถานะคู่รักใน ON KING CUPID ครับ`, ephemeral: true }); return; }
-          await interaction.reply({ content: `💍 <@${couple.user1}> เป็นคู่รักกับ <@${couple.user2}> ตั้งแต่ ${cupidDate(couple.createdAt)} ครับ`, ephemeral: true }); return;
-        }
-        if (subcommand === "divorce") {
-          const index = cupidData.couples.findIndex(c => c.guildId === interaction.guildId && (c.user1 === interaction.user.id || c.user2 === interaction.user.id));
-          if (index < 0) { await interaction.reply({ content: "คุณยังไม่มีสถานะคู่รักใน ON KING CUPID ครับ", ephemeral: true }); return; }
-          const couple = cupidData.couples[index]; couple.endedAt = Date.now(); cupidData.couples.splice(index, 1); saveCupidData();
-          const channel = couple.cardChannelId ? interaction.guild.channels.cache.get(couple.cardChannelId) || await interaction.guild.channels.fetch(couple.cardChannelId).catch(() => null) : null;
-          if (channel && couple.cardMessageId) {
-            const cardMessage = await channel.messages.fetch(couple.cardMessageId).catch(() => null);
-            if (cardMessage) await cardMessage.edit({ embeds: [createCupidCard(couple, true)] }).catch(() => {});
-          }
-          await interaction.reply({ content: "ยุติสถานะคู่รักเรียบร้อยแล้วครับ การ์ดเดิมจะเปลี่ยนเป็นสถานะสิ้นสุดความสัมพันธ์ 💛", ephemeral: true }); return;
-        }
-      }
-
       if (interaction.commandName === "sweetmatch") {
         const subcommand = interaction.options.getSubcommand();
 
@@ -994,6 +758,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (subcommand === "setup") {
           const panelChannel = interaction.options.getChannel("panel_channel");
           const category = interaction.options.getChannel("voice_category");
+          const waitingVoice = interaction.options.getChannel("waiting_voice", true);
           const me = await interaction.guild.members.fetchMe();
           const panelPermissions = panelChannel.permissionsFor(me);
           const categoryPermissions = category.permissionsFor(me);
@@ -1022,9 +787,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
           }
 
+          if (!waitingVoice.permissionsFor(me)?.has(PermissionFlagsBits.ViewChannel)) {
+            await interaction.reply({
+              content: "บอทต้องมีสิทธิ์ View Channel ในห้องเสียงรอจับคู่ครับ",
+              ephemeral: true
+            });
+            return;
+          }
+
           sweetSettings[interaction.guildId] = {
+            ...(sweetSettings[interaction.guildId] || {}),
             panelChannelId: panelChannel.id,
-            categoryChannelId: category.id
+            categoryChannelId: category.id,
+            waitingVoiceChannelId: waitingVoice.id
           };
 
           try {
@@ -1039,7 +814,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
 
           await interaction.reply({
-            content: `บันทึกการตั้งค่าแล้วครับ\nห้องแผงจับคู่: ${panelChannel}\nหมวดหมู่ห้องเสียง: ${category}\nกำลังส่งแผงปุ่มจับคู่...`,
+            content: `บันทึกการตั้งค่าแล้วครับ\nห้องแผงจับคู่: ${panelChannel}\nห้องเสียงรอจับคู่: ${waitingVoice}\nหมวดหมู่ห้องเสียงส่วนตัว: ${category}\nกำลังส่งแผงปุ่มจับคู่...`,
             ephemeral: true
           });
           await sendPanel(panelChannel);
@@ -1069,49 +844,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton()) {
-      if (interaction.customId.startsWith("cupid_accept:") || interaction.customId.startsWith("cupid_decline:")) {
-        const [action, requestId] = interaction.customId.split(":");
-        const index = cupidData.pending.findIndex(p => p.id === requestId && p.guildId === interaction.guildId);
-        if (index < 0) { await interaction.reply({ content: "คำขอนี้ถูกดำเนินการไปแล้วครับ", ephemeral: true }); return; }
-        const request = cupidData.pending[index];
-        if (interaction.user.id !== request.toId) { await interaction.reply({ content: "เฉพาะสมาชิกที่ได้รับคำขอเท่านั้นที่กดปุ่มนี้ได้ครับ", ephemeral: true }); return; }
-        if (action === "cupid_decline") {
-          cupidData.pending.splice(index, 1); saveCupidData();
-          await interaction.update({ embeds: [new EmbedBuilder().setColor(0x777777).setTitle("ON KING CUPID • คำขอถูกปฏิเสธ").setDescription(`<@${request.toId}> ปฏิเสธคำขอจาก <@${request.fromId}> แล้วครับ`).setTimestamp()], components: [] }); return;
-        }
-        if (findCupidCouple(interaction.guildId, request.fromId) || findCupidCouple(interaction.guildId, request.toId)) {
-          cupidData.pending.splice(index, 1); saveCupidData();
-          await interaction.update({ content: "ไม่สามารถสร้างคู่รักได้ เพราะมีสมาชิกคนใดคนหนึ่งมีคู่แล้วครับ", embeds: [], components: [] }); return;
-        }
-        const couple = { guildId: interaction.guildId, user1: request.fromId, user2: request.toId, createdAt: Date.now() };
-        cupidData.pending.splice(index, 1); cupidData.couples.push(couple); saveCupidData();
-        const cardChannelId = cupidData.settings[interaction.guildId]?.cardChannelId;
-        const cardChannel = cardChannelId ? interaction.guild.channels.cache.get(cardChannelId) || await interaction.guild.channels.fetch(cardChannelId).catch(() => null) : null;
-        if (cardChannel && cardChannel.type === ChannelType.GuildText) {
-          const cardMessage = await cardChannel.send({ embeds: [createCupidCard(couple)] });
-          couple.cardChannelId = cardChannel.id; couple.cardMessageId = cardMessage.id; saveCupidData();
-        }
-        await interaction.update({ embeds: [new EmbedBuilder().setColor(0xD4AF37).setTitle("💍 ON KING CUPID • ตอบรับแล้ว")
-          .setDescription(`ยินดีกับ <@${request.fromId}> และ <@${request.toId}> ด้วยครับ!\nการ์ด ON KING COUPLE ถูกส่งไปยังห้องการ์ดคู่รักแล้ว 💛`).setTimestamp()], components: [] }); return;
-      }
-
       if (interaction.customId === "sm_start") {
         if (!interaction.inGuild()) {
           await interaction.reply({ content: "ใช้ได้เฉพาะในเซิร์ฟเวอร์ครับ", ephemeral: true });
           return;
         }
-        const clickingMember = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-        if (!clickingMember?.voice?.channelId) {
-          await interaction.reply({
-            content: "กรุณาเข้าห้องเสียงใดก็ได้ก่อนเริ่มจับคู่ครับ",
-            ephemeral: true
-          });
-          return;
-        }
         const current = selections.get(interaction.user.id) || {};
         selections.set(interaction.user.id, current);
         await interaction.reply({
-          content: "เลือกเพศของตัวเองและเพศที่ต้องการพบครับ",
+          content: "เลือกเพศของตัวเองและเพศที่ต้องการพบครับ เมื่อเลือกครบแล้ว หากอยู่ในห้องเสียงจะเริ่มค้นหาอัตโนมัติ หรือเลือกไว้ก่อนแล้วค่อยเข้าห้องเสียงก็ได้ครับ",
           components: selectionComponents(interaction.user.id, current),
           ephemeral: true
         });
@@ -1155,8 +896,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (kind === "sm_gender") selection.gender = interaction.values[0];
       if (kind === "sm_preference") selection.preference = interaction.values[0];
       selections.set(ownerId, selection);
+      if (selection.gender && selection.preference) {
+        const guild = interaction.guild || [...client.guilds.cache.values()].find(g => g.members.cache.has(ownerId));
+        const member = guild ? await guild.members.fetch(ownerId).catch(() => null) : null;
+        const waitingVoiceId = guild ? sweetSettings[guild.id]?.waitingVoiceChannelId : null;
+        if (member?.voice?.channelId && member.voice.channelId === waitingVoiceId) {
+          await interaction.deferUpdate();
+          await beginSearch(interaction, selection);
+          selections.delete(ownerId);
+          return;
+        }
+        await interaction.update({
+          content: "บันทึกการตั้งค่าเรียบร้อยครับ 💛 เมื่อคุณเข้าห้องเสียงรอจับคู่ ON KING SWEET MATCH ระบบจะเริ่มค้นหาอัตโนมัติ",
+          components: selectionComponents(ownerId, selection)
+        });
+        return;
+      }
       await interaction.update({
-        content: "เลือกเพศของตัวเองและเพศที่ต้องการพบครับ",
+        content: "เลือกเพศของตัวเองและเพศที่ต้องการพบให้ครบทั้งสองรายการครับ",
         components: selectionComponents(ownerId, selection)
       });
     }
@@ -1172,6 +929,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  const waitingVoiceId = sweetSettings[oldState.guild.id]?.waitingVoiceChannelId;
+  if (oldState.channelId === waitingVoiceId && newState.channelId !== waitingVoiceId) {
+    const queued = await removeFromQueue(oldState.guild.id, oldState.id);
+    if (queued) {
+      await queued.interaction.editReply({
+        content: "คุณออกจากห้องเสียงรอจับคู่แล้ว ระบบจึงยกเลิกการค้นหาให้ครับ หากต้องการจับคู่อีกครั้งให้กลับเข้าห้องรอจับคู่",
+        components: []
+      }).catch(() => {});
+    }
+  }
+  if (newState.channelId && oldState.channelId !== newState.channelId) {
+    const waitingVoiceId = sweetSettings[newState.guild.id]?.waitingVoiceChannelId;
+    const selection = selections.get(newState.id);
+    const queue = getQueue(newState.guild.id);
+    const alreadySearching = queue.some(entry => entry.userId === newState.id);
+    if (newState.channelId === waitingVoiceId && selection?.gender && selection?.preference && !activeUsers.has(newState.id) && !alreadySearching) {
+      const member = newState.member || await newState.guild.members.fetch(newState.id).catch(() => null);
+      if (member) {
+        const dm = await member.send("💛 คุณเข้าห้องเสียงแล้ว ระบบกำลังเริ่มค้นหาคู่ ON KING SWEET MATCH อัตโนมัติครับ").catch(() => null);
+        const autoInteraction = {
+          guild: newState.guild,
+          guildId: newState.guild.id,
+          user: member.user,
+          editReply: async payload => { if (dm) await dm.edit(payload).catch(() => {}); }
+        };
+        await beginSearch(autoInteraction, selection);
+        selections.delete(newState.id);
+      }
+    }
+  }
   if (!oldState.channelId || oldState.channelId === newState.channelId) return;
   const match = activeMatches.get(oldState.channelId);
   if (!match || !match.userIds.includes(oldState.id)) return;
