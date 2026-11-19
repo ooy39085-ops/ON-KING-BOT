@@ -231,17 +231,9 @@ function selectionComponents(userId, selection = {}) {
     .setPlaceholder("เลือกเพศที่ต้องการพบ")
     .addOptions(preferenceOptions);
 
-  const ready = Boolean(selection.gender && selection.preference);
-  const submit = new ButtonBuilder()
-    .setCustomId("sm_submit")
-    .setLabel("เริ่มค้นหาคู่")
-    .setStyle(ButtonStyle.Success)
-    .setDisabled(!ready);
-
   return [
     new ActionRowBuilder().addComponents(genderMenu),
-    new ActionRowBuilder().addComponents(preferenceMenu),
-    new ActionRowBuilder().addComponents(submit)
+    new ActionRowBuilder().addComponents(preferenceMenu)
   ];
 }
 
@@ -919,18 +911,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.reply({ content: "ใช้ได้เฉพาะในเซิร์ฟเวอร์ครับ", ephemeral: true });
           return;
         }
-        const clickingMember = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-        if (!clickingMember?.voice?.channelId) {
-          await interaction.reply({
-            content: "กรุณาเข้าห้องเสียงใดก็ได้ก่อนเริ่มจับคู่ครับ",
-            ephemeral: true
-          });
-          return;
-        }
         const current = selections.get(interaction.user.id) || {};
         selections.set(interaction.user.id, current);
         await interaction.reply({
-          content: "เลือกเพศของตัวเองและเพศที่ต้องการพบครับ",
+          content: "เลือกเพศของตัวเองและเพศที่ต้องการพบครับ เมื่อเลือกครบแล้ว หากอยู่ในห้องเสียงจะเริ่มค้นหาอัตโนมัติ หรือเลือกไว้ก่อนแล้วค่อยเข้าห้องเสียงก็ได้ครับ",
           components: selectionComponents(interaction.user.id, current),
           ephemeral: true
         });
@@ -974,8 +958,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (kind === "sm_gender") selection.gender = interaction.values[0];
       if (kind === "sm_preference") selection.preference = interaction.values[0];
       selections.set(ownerId, selection);
+      if (selection.gender && selection.preference) {
+        const guild = interaction.guild || [...client.guilds.cache.values()].find(g => g.members.cache.has(ownerId));
+        const member = guild ? await guild.members.fetch(ownerId).catch(() => null) : null;
+        if (member?.voice?.channelId) {
+          await interaction.deferUpdate();
+          await beginSearch(interaction, selection);
+          selections.delete(ownerId);
+          return;
+        }
+        await interaction.update({
+          content: "บันทึกการตั้งค่าเรียบร้อยครับ 💛 เมื่อคุณเข้าห้องเสียง ระบบจะเริ่มค้นหาคู่อัตโนมัติ",
+          components: selectionComponents(ownerId, selection)
+        });
+        return;
+      }
       await interaction.update({
-        content: "เลือกเพศของตัวเองและเพศที่ต้องการพบครับ",
+        content: "เลือกเพศของตัวเองและเพศที่ต้องการพบให้ครบทั้งสองรายการครับ",
         components: selectionComponents(ownerId, selection)
       });
     }
@@ -991,6 +990,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  if (newState.channelId && oldState.channelId !== newState.channelId) {
+    const selection = selections.get(newState.id);
+    const queue = getQueue(newState.guild.id);
+    const alreadySearching = queue.some(entry => entry.userId === newState.id);
+    if (selection?.gender && selection?.preference && !activeUsers.has(newState.id) && !alreadySearching) {
+      const member = newState.member || await newState.guild.members.fetch(newState.id).catch(() => null);
+      if (member) {
+        const dm = await member.send("💛 คุณเข้าห้องเสียงแล้ว ระบบกำลังเริ่มค้นหาคู่ ON KING SWEET MATCH อัตโนมัติครับ").catch(() => null);
+        const autoInteraction = {
+          guild: newState.guild,
+          guildId: newState.guild.id,
+          user: member.user,
+          editReply: async payload => { if (dm) await dm.edit(payload).catch(() => {}); }
+        };
+        await beginSearch(autoInteraction, selection);
+        selections.delete(newState.id);
+      }
+    }
+  }
   if (!oldState.channelId || oldState.channelId === newState.channelId) return;
   const match = activeMatches.get(oldState.channelId);
   if (!match || !match.userIds.includes(oldState.id)) return;
