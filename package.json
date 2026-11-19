@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check dashboard-api.js && node --check music.js && node --check voice-presence.js && node --check cupid.js && node -e \"const c=require('./cupid'); if (!Array.isArray(c.commands) || typeof c.handle !== 'function' || typeof c.restore !== 'function') process.exit(1); console.log('CUPID module load OK; commands:', c.commands.map(x => x.name).join(', '))\""
+    "check": "node --check index.js && node --check dashboard-api.js && node --check voice-presence.js && node --check cupid.js && node -e \"const c=require('./cupid'); if (!Array.isArray(c.commands) || typeof c.handle !== 'function' || typeof c.restore !== 'function') process.exit(1); console.log('CUPID module load OK; commands:', c.commands.map(x => x.name).join(', '))\""
   },
   "engines": {
     "node": ">=20"
@@ -13,7 +13,6 @@
   "dependencies": {
     "discord.js": "^14.22.1",
     "@discordjs/voice": "^0.18.0",
-    "play-dl": "^1.9.7",
     "@supabase/supabase-js": "^2",
     "sharp": "^0.35.5"
   }
