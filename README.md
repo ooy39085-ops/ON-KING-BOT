@@ -40,6 +40,7 @@ Set credentials as environment variables in the host; never place their values i
 - `SUPABASE_PUBLISHABLE_KEY` or `SUPABASE_ANON_KEY`
 - `DASHBOARD_ORIGINS` (comma-separated exact website origins)
 - `PORT` (provided by the hosting platform when applicable)
+- `ONKING_CUPID_CARD_TEMPLATE_BASE_URL` (optional; defaults to `https://onking1510u.netlify.app/assets/cupid`)
 
 The Dashboard API runs in the same Node process as the Discord bot in the current implementation. Therefore, testing the live API currently requires starting that process, which also attempts Discord login. Keep live testing disabled until the owner explicitly approves it.
 
@@ -56,3 +57,4 @@ See [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md) for implemented systems, ag
 - Per-guild card settings are stored in `on-king-card-settings.json`. Preserve this runtime file on every Hostrix update and keep it out of Git.
 - The editor is served by the website page `guild-cards.html`; the API CORS allowlist must include the exact production website origin.
 - Static checks do not prove Discord OAuth token persistence, actual owner authorization, image generation, or live Discord delivery. Those require a controlled runtime test after deployment approval.
+The website package includes the approved card artwork at `assets/cupid/on-king-couple-card.png` and `assets/cupid/on-king-divorce-card.png`. Deploy those files before testing the bot's card renderer, or set the template base URL to the deployed site's matching `assets/cupid` directory.
