@@ -4,7 +4,8 @@
   "description": "ON KING COMMUNITY Discord Bot",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "check": "node --check index.js && node --check dashboard-api.js && node --check music.js && node --check voice-presence.js"
   },
   "engines": {
     "node": ">=20"
