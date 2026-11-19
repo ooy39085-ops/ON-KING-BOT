@@ -5,19 +5,18 @@ const { SlashCommandBuilder, ChannelType, PermissionFlagsBits, EmbedBuilder, Act
 const FILE = path.join(process.cwd(), "on-king-cupid-data.json");
 const TTL = 3600000, INTERVAL = 30000;
 let clientRef;
-let data = { settings: {}, couples: [], pending: [] };
+let data = { settings: {}, couples: [], pending: [], history: [], divorcePending: [] };
 const timers = new Map();
 try {
   if (fs.existsSync(FILE)) {
     const saved = JSON.parse(fs.readFileSync(FILE, "utf8"));
-    data = { settings: saved.settings || {}, couples: Array.isArray(saved.couples) ? saved.couples : [], pending: Array.isArray(saved.pending) ? saved.pending : [] };
+    data = { settings: saved.settings && typeof saved.settings === "object" ? saved.settings : {}, couples: Array.isArray(saved.couples) ? saved.couples : [], pending: Array.isArray(saved.pending) ? saved.pending : [], history: Array.isArray(saved.history) ? saved.history : [], divorcePending: Array.isArray(saved.divorcePending) ? saved.divorcePending : [] };
   }
 } catch (e) { console.error("อ่านข้อมูล CUPID ไม่สำเร็จ:", e.message); }
 for (const [guildId, settings] of Object.entries(data.settings)) {
   if (!settings.marriageRequestChannelId && settings.requestChannelId) settings.marriageRequestChannelId = settings.requestChannelId;
   if (!settings.marriageAnnouncementChannelId && settings.cardChannelId) settings.marriageAnnouncementChannelId = settings.cardChannelId;
   if (!settings.divorceAnnouncementChannelId && settings.breakupChannelId) settings.divorceAnnouncementChannelId = settings.breakupChannelId;
-  if (!settings.divorceRequestChannelId && settings.breakupChannelId) settings.divorceRequestChannelId = settings.breakupChannelId;
 }
 for (const req of data.pending) {
   if (!req.type) req.type = "marriage";
@@ -84,6 +83,7 @@ async function complete(r, result) {
   }
 
   data.pending.splice(idx, 1);
+  data.history.push({ ...r, status: outcome, completedAt: Date.now() });
   save();
   const timer = timers.get(r.id);
   if (timer) clearInterval(timer);
@@ -187,6 +187,9 @@ async function makeRequest(interaction, type, targetId) {
   await interaction.reply({ content: "ส่งคำขอแล้วครับ อีกฝ่ายมีเวลา 1 ชั่วโมงในการยืนยัน", ephemeral: true });
 }
 const commands = [
+  new SlashCommandBuilder().setName("marriage").setDescription("ส่งคำขอแต่งงานให้สมาชิกที่เลือก")
+    .addUserOption(o => o.setName("member").setDescription("สมาชิกที่ต้องการขอแต่งงาน").setRequired(true)).toJSON(),
+  new SlashCommandBuilder().setName("breakup").setDescription("ส่งคำขอหย่าร้างให้คู่สมรสของคุณ").toJSON(),
   new SlashCommandBuilder().setName("cupid-setup").setDescription("ตั้งค่าห้องคำขอและห้องประกาศ ON KING CUPID").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addChannelOption(o => o.setName("marriage_request").setDescription("ห้องคำขอแต่งงาน").addChannelTypes(ChannelType.GuildText).setRequired(true))
     .addChannelOption(o => o.setName("marriage_announcement").setDescription("ห้องประกาศแต่งงาน").addChannelTypes(ChannelType.GuildText).setRequired(true))
@@ -196,6 +199,15 @@ const commands = [
     .addUserOption(o => o.setName("member").setDescription("สมาชิกที่ต้องการตรวจสอบ").setRequired(false)).toJSON()
 ];
 async function handle(i) {
+  if (i.isChatInputCommand() && i.commandName === "marriage") {
+    const target = i.options.getUser("member", true);
+    await makeRequest(i, "marriage", target.id);
+    return true;
+  }
+  if (i.isChatInputCommand() && i.commandName === "breakup") {
+    await makeRequest(i, "divorce");
+    return true;
+  }
   if (i.isChatInputCommand() && i.commandName === "checkcouple") {
     const target = i.options.getUser("member") || i.user;
     const c = coupleFor(i.guildId, target.id);
@@ -220,7 +232,7 @@ async function handle(i) {
     const me = await i.guild.members.fetchMe(), needed = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
     if (Object.values(c).some(ch => !ch.permissionsFor(me)?.has(needed))) { await i.reply({ content: "บอทต้องมีสิทธิ์ View Channel, Send Messages และ Embed Links ในทุกห้องครับ", ephemeral: true }); return true; }
     data.settings[i.guildId] = Object.fromEntries(Object.entries(c).map(([k, v]) => [k, v.id])); save();
-    await panel(c.marriageRequestChannelId, "marriage"); await panel(c.divorceRequestChannelId, "divorce");
+    await panel(i.options.getChannel("marriage_request", true), "marriage"); await panel(i.options.getChannel("divorce_request", true), "divorce");
     await i.reply({ content: "ตั้งค่า ON KING CUPID และส่งแผงปุ่มทั้งสองห้องเรียบร้อยแล้วครับ", ephemeral: true }); return true;
   }
   if (i.isButton()) {
