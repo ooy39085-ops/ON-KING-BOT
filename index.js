@@ -460,9 +460,14 @@ async function beginSearch(interaction, selection) {
     return;
   }
   const searchingMember = await guild.members.fetch(interaction.user.id).catch(() => null);
-  if (!searchingMember?.voice?.channelId) {
+  const waitingVoiceChannelId = sweetSettings[guild.id]?.waitingVoiceChannelId;
+  if (!waitingVoiceChannelId) {
+    await interaction.editReply({ content: "แอดมินยังไม่ได้ตั้งค่าห้องเสียงรอจับคู่ กรุณาใช้ /sweetmatch setup ก่อนครับ", components: [] });
+    return;
+  }
+  if (searchingMember?.voice?.channelId !== waitingVoiceChannelId) {
     await interaction.editReply({
-      content: "กรุณาเข้าห้องเสียงใดก็ได้ในเซิร์ฟเวอร์ก่อน แล้วกดเริ่มค้นหาอีกครั้งครับ",
+      content: "กรุณาเข้าห้องเสียงรอจับคู่ ON KING SWEET MATCH ที่แอดมินกำหนดไว้ก่อนครับ",
       components: []
     });
     return;
@@ -565,6 +570,13 @@ const commands = [
             .setName("voice_category")
             .setDescription("หมวดหมู่ที่จะใช้สร้างห้องเสียงส่วนตัว")
             .addChannelTypes(ChannelType.GuildCategory)
+            .setRequired(true)
+        )
+        .addChannelOption(option =>
+          option
+            .setName("waiting_voice")
+            .setDescription("ห้องเสียงรอจับคู่ สมาชิกเข้าห้องนี้เพื่อเริ่มค้นหาอัตโนมัติ")
+            .addChannelTypes(ChannelType.GuildVoice)
             .setRequired(true)
         )
     )
@@ -818,6 +830,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (subcommand === "setup") {
           const panelChannel = interaction.options.getChannel("panel_channel");
           const category = interaction.options.getChannel("voice_category");
+          const waitingVoice = interaction.options.getChannel("waiting_voice", true);
           const me = await interaction.guild.members.fetchMe();
           const panelPermissions = panelChannel.permissionsFor(me);
           const categoryPermissions = category.permissionsFor(me);
@@ -846,9 +859,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
           }
 
+          if (!waitingVoice.permissionsFor(me)?.has(PermissionFlagsBits.ViewChannel)) {
+            await interaction.reply({
+              content: "บอทต้องมีสิทธิ์ View Channel ในห้องเสียงรอจับคู่ครับ",
+              ephemeral: true
+            });
+            return;
+          }
+
           sweetSettings[interaction.guildId] = {
+            ...(sweetSettings[interaction.guildId] || {}),
             panelChannelId: panelChannel.id,
-            categoryChannelId: category.id
+            categoryChannelId: category.id,
+            waitingVoiceChannelId: waitingVoice.id
           };
 
           try {
@@ -863,7 +886,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
 
           await interaction.reply({
-            content: `บันทึกการตั้งค่าแล้วครับ\nห้องแผงจับคู่: ${panelChannel}\nหมวดหมู่ห้องเสียง: ${category}\nกำลังส่งแผงปุ่มจับคู่...`,
+            content: `บันทึกการตั้งค่าแล้วครับ\nห้องแผงจับคู่: ${panelChannel}\nห้องเสียงรอจับคู่: ${waitingVoice}\nหมวดหมู่ห้องเสียงส่วนตัว: ${category}\nกำลังส่งแผงปุ่มจับคู่...`,
             ephemeral: true
           });
           await sendPanel(panelChannel);
@@ -974,14 +997,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (selection.gender && selection.preference) {
         const guild = interaction.guild || [...client.guilds.cache.values()].find(g => g.members.cache.has(ownerId));
         const member = guild ? await guild.members.fetch(ownerId).catch(() => null) : null;
-        if (member?.voice?.channelId) {
+        const waitingVoiceId = guild ? sweetSettings[guild.id]?.waitingVoiceChannelId : null;
+        if (member?.voice?.channelId && member.voice.channelId === waitingVoiceId) {
           await interaction.deferUpdate();
           await beginSearch(interaction, selection);
           selections.delete(ownerId);
           return;
         }
         await interaction.update({
-          content: "บันทึกการตั้งค่าเรียบร้อยครับ 💛 เมื่อคุณเข้าห้องเสียง ระบบจะเริ่มค้นหาคู่อัตโนมัติ",
+          content: "บันทึกการตั้งค่าเรียบร้อยครับ 💛 เมื่อคุณเข้าห้องเสียงรอจับคู่ ON KING SWEET MATCH ระบบจะเริ่มค้นหาอัตโนมัติ",
           components: selectionComponents(ownerId, selection)
         });
         return;
@@ -1004,10 +1028,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   if (newState.channelId && oldState.channelId !== newState.channelId) {
+    const waitingVoiceId = sweetSettings[newState.guild.id]?.waitingVoiceChannelId;
     const selection = selections.get(newState.id);
     const queue = getQueue(newState.guild.id);
     const alreadySearching = queue.some(entry => entry.userId === newState.id);
-    if (selection?.gender && selection?.preference && !activeUsers.has(newState.id) && !alreadySearching) {
+    if (newState.channelId === waitingVoiceId && selection?.gender && selection?.preference && !activeUsers.has(newState.id) && !alreadySearching) {
       const member = newState.member || await newState.guild.members.fetch(newState.id).catch(() => null);
       if (member) {
         const dm = await member.send("💛 คุณเข้าห้องเสียงแล้ว ระบบกำลังเริ่มค้นหาคู่ ON KING SWEET MATCH อัตโนมัติครับ").catch(() => null);
