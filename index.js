@@ -20,6 +20,7 @@ const {
 const { restoreVoicePresence, setPermanentVoiceChannel } = require("./voice-presence");
 const { musicCommands, handleMusicInteraction } = require("./music");
 const { startDashboardApi } = require("./dashboard-api");
+const cupid = require("./cupid");
 const token = process.env.DISCORD_BOT_TOKEN;
 const syncSecret = process.env.DISCORD_SYNC_SECRET;
 const supabaseUrl = (process.env.SUPABASE_URL || "https://alfaddeavpefqobspvxt.supabase.co").replace(/\/$/, "");
@@ -40,6 +41,8 @@ const client = new Client({
     GatewayIntentBits.GuildVoiceStates
   ]
 });
+
+cupid.init(client);
 
 // Sweet Match settings are stored locally on the bot host. No website or Supabase
 // schema is used by this feature.
@@ -566,31 +569,7 @@ const commands = [
         .setDescription("ส่งแผงปุ่มเริ่มจับคู่ไปยังห้องที่ตั้งค่าไว้")
     )
     .toJSON(),
-  new SlashCommandBuilder()
-    .setName("breakup")
-    .setNameLocalizations({ th: "เลิก" })
-    .setDescription("ยุติสถานะคู่รักกับสมาชิกที่ระบุ")
-    .addUserOption(o => o.setName("member").setNameLocalizations({ th: "สมาชิก" }).setDescription("เลือกคู่รักของคุณ").setRequired(true))
-    .toJSON(),
-  new SlashCommandBuilder()
-    .setName("checkcouple")
-    .setNameLocalizations({ th: "เช็คคู่รัก" })
-    .setDescription("ตรวจสอบคู่รักและวันเริ่มต้นความสัมพันธ์")
-    .addUserOption(o => o.setName("member").setNameLocalizations({ th: "สมาชิก" }).setDescription("สมาชิกที่ต้องการตรวจสอบ").setRequired(true))
-    .toJSON(),
-  new SlashCommandBuilder()
-    .setName("marriage")
-    .setNameLocalizations({ th: "แต่งงาน" })
-    .setDescription("ระบบขอเป็นแฟนและการ์ดคู่รัก ON KING CUPID")
-    .addSubcommand(s => s.setName("setup").setDescription("ตั้งค่าห้องขอเป็นแฟน ห้องการ์ดคู่รัก และห้องแจ้งหย่าร้าง")
-      .addChannelOption(o => o.setName("request_channel").setDescription("ห้องสำหรับใช้คำสั่งขอเป็นแฟน").addChannelTypes(ChannelType.GuildText).setRequired(true))
-      .addChannelOption(o => o.setName("card_channel").setDescription("ห้องสำหรับแสดงการ์ดคู่รัก").addChannelTypes(ChannelType.GuildText).setRequired(true))
-      .addChannelOption(o => o.setName("breakup_channel").setDescription("ห้องสำหรับแจ้งการหย่าร้าง").addChannelTypes(ChannelType.GuildText).setRequired(true)))
-    .addSubcommand(s => s.setName("request").setDescription("ส่งคำขอเป็นแฟนให้สมาชิกที่เลือก")
-      .addUserOption(o => o.setName("member").setDescription("สมาชิกที่ต้องการขอเป็นแฟน").setRequired(true)))
-    .addSubcommand(s => s.setName("status").setDescription("ตรวจสอบสถานะคู่รัก")
-      .addUserOption(o => o.setName("member").setDescription("สมาชิกที่ต้องการตรวจสอบ").setRequired(false)))
-    .toJSON(),
+  ...cupid.commands,
   ...musicCommands
 ];
 
@@ -703,6 +682,7 @@ async function syncAllGuildMembers(guild) {
 }
 
 client.once(Events.ClientReady, async (readyClient) => {
+  await cupid.restore(readyClient);
   console.log(`ON KING BOT ONLINE: ${readyClient.user.tag}`);
 
   readyClient.user.setPresence({
@@ -785,6 +765,7 @@ client.on(Events.GuildMemberRemove, async (member) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (await cupid.handle(interaction)) return;
 
     if (interaction.isChatInputCommand()) {
       const musicHandled = await handleMusicInteraction(interaction);
@@ -815,168 +796,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         return;
       }
-
-
-
-      if (interaction.commandName === "breakup" || interaction.commandName === "เลิก") {
-        const target = interaction.options.getUser("member", true);
-        if (target.bot || target.id === interaction.user.id) {
-          await interaction.reply({ content: "กรุณาเลือกคู่รักของคุณ ไม่สามารถเลือกตัวเองหรือบอทได้ครับ", ephemeral: true });
-          return;
-        }
-        const index = cupidData.couples.findIndex(c =>
-          c.guildId === interaction.guildId &&
-          ((c.user1 === interaction.user.id && c.user2 === target.id) ||
-           (c.user2 === interaction.user.id && c.user1 === target.id))
-        );
-        if (index < 0) {
-          await interaction.reply({ content: "ไม่พบสถานะคู่รักระหว่างคุณกับสมาชิกที่เลือกครับ คุณสามารถเลิกได้เฉพาะคู่รักของตัวเองเท่านั้น", ephemeral: true });
-          return;
-        }
-        const couple = cupidData.couples[index];
-        couple.endedAt = Date.now();
-        cupidData.couples.splice(index, 1);
-        saveCupidData();
-
-        const cardChannel = couple.cardChannelId
-          ? interaction.guild.channels.cache.get(couple.cardChannelId) || await interaction.guild.channels.fetch(couple.cardChannelId).catch(() => null)
-          : null;
-        if (cardChannel && couple.cardMessageId) {
-          const cardMessage = await cardChannel.messages.fetch(couple.cardMessageId).catch(() => null);
-          if (cardMessage) await cardMessage.edit({ embeds: [createCupidCard(couple, true)] }).catch(error => console.error("อัปเดตการ์ดคู่รักหลังเลิกไม่สำเร็จ:", error));
-        }
-
-        const breakupEmbed = new EmbedBuilder()
-          .setColor(0x777777)
-          .setTitle("🖤 ON KING CUPID • แจ้งสิ้นสุดความสัมพันธ์")
-          .setDescription(`<@${interaction.user.id}> และ <@${target.id}> ได้สิ้นสุดสถานะคู่รักแล้วครับ`)
-          .addFields({ name: "วันที่สิ้นสุด", value: cupidDate(couple.endedAt), inline: false })
-          .setFooter({ text: "ON KING COMMUNITY • LOVE IN THE KINGDOM" })
-          .setTimestamp(couple.endedAt);
-        const breakupChannelId = cupidData.settings[interaction.guildId]?.breakupChannelId;
-        const breakupChannel = breakupChannelId
-          ? interaction.guild.channels.cache.get(breakupChannelId) || await interaction.guild.channels.fetch(breakupChannelId).catch(() => null)
-          : null;
-        if (breakupChannel?.isTextBased()) {
-          await breakupChannel.send({ embeds: [breakupEmbed] });
-          await interaction.reply({ content: `แจ้งการสิ้นสุดความสัมพันธ์ในห้อง ${breakupChannel} แล้วครับ และอัปเดตการ์ดคู่รักเดิมเรียบร้อย`, ephemeral: true });
-        } else {
-          await interaction.reply({ content: "ยังไม่ได้ตั้งค่าห้องแจ้งเตือนหย่าร้าง กรุณาให้แอดมินใช้ /แต่งงาน setup ตั้งค่าห้องก่อนครับ", ephemeral: true });
-        }
-        return;
-      }
-
-      if (interaction.commandName === "checkcouple" || interaction.commandName === "เช็คคู่รัก") {
-        const target = interaction.options.getUser("member", true);
-        const couple = findCupidCouple(interaction.guildId, target.id);
-        if (!couple) {
-          await interaction.reply({
-            content: `💛 <@${target.id}> ยังไม่มีคู่รักในระบบ ON KING CUPID ครับ`,
-            ephemeral: true
-          });
-          return;
-        }
-
-        const partnerId = couple.user1 === target.id ? couple.user2 : couple.user1;
-        const targetMember = await interaction.guild.members.fetch(target.id).catch(() => null);
-        const partnerMember = await interaction.guild.members.fetch(partnerId).catch(() => null);
-        const targetName = targetMember?.displayName || target.username;
-        const partnerName = partnerMember?.displayName || (await client.users.fetch(partnerId).catch(() => null))?.username || "สมาชิก ON KING";
-        const embed = new EmbedBuilder()
-          .setColor(0xD4AF37)
-          .setTitle("💍 ON KING CUPID • ตรวจสอบคู่รัก")
-          .setDescription(`**${targetName}** ♡ **${partnerName}**`)
-          .addFields(
-            { name: "สมาชิกที่ค้นหา", value: `<@${target.id}>`, inline: true },
-            { name: "คู่รัก", value: `<@${partnerId}>`, inline: true },
-            { name: "วันแต่งงาน", value: cupidDate(couple.createdAt), inline: false }
-          )
-          .setFooter({ text: "ON KING COMMUNITY • LOVE IN THE KINGDOM" })
-          .setTimestamp(couple.createdAt);
-
-        await interaction.reply({ embeds: [embed], ephemeral: false });
-        return;
-      }
-
-      if (interaction.commandName === "marriage" || interaction.commandName === "แต่งงาน") {
-        const subcommand = interaction.options.getSubcommand();
-        const settings = cupidData.settings[interaction.guildId] || {};
-        if (subcommand === "setup") {
-          if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
-            await interaction.reply({ content: "คำสั่งตั้งค่านี้สำหรับแอดมินที่มีสิทธิ์ Manage Server เท่านั้นครับ", ephemeral: true }); return;
-          }
-          const requestChannel = interaction.options.getChannel("request_channel");
-          const cardChannel = interaction.options.getChannel("card_channel");
-          const breakupChannel = interaction.options.getChannel("breakup_channel");
-          const selectedChannelIds = [requestChannel.id, cardChannel.id, breakupChannel.id];
-          if (new Set(selectedChannelIds).size !== selectedChannelIds.length) {
-            await interaction.reply({ content: "กรุณาเลือกห้องทั้ง 3 ห้องไม่ให้ซ้ำกันครับ", ephemeral: true }); return;
-          }
-          const me = await interaction.guild.members.fetchMe();
-          const needed = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
-          if (![requestChannel, cardChannel, breakupChannel].every(channel => channel.permissionsFor(me)?.has(needed))) {
-            await interaction.reply({ content: "บอทต้องมีสิทธิ์ View Channel, Send Messages และ Embed Links ในห้องทั้ง 3 ครับ", ephemeral: true }); return;
-          }
-          cupidData.settings[interaction.guildId] = {
-            requestChannelId: requestChannel.id,
-            cardChannelId: cardChannel.id,
-            breakupChannelId: breakupChannel.id
-          };
-          try { saveCupidData(); } catch (error) {
-            console.error("บันทึกการตั้งค่า ON KING CUPID ไม่สำเร็จ:", error);
-            await interaction.reply({ content: "บันทึกการตั้งค่าไม่ได้ กรุณาตรวจสอบสิทธิ์เขียนไฟล์ของ Hostrix ครับ", ephemeral: true }); return;
-          }
-          await interaction.reply({ content: `ตั้งค่า ON KING CUPID สำเร็จแล้วครับ\nห้องขอเป็นแฟน: ${requestChannel}\nห้องแต่งงาน/การ์ดคู่รัก: ${cardChannel}\nห้องแจ้งเตือนหย่าร้าง: ${breakupChannel}`, ephemeral: true }); return;
-        }
-        if (subcommand === "request") {
-          if (!settings.requestChannelId) {
-            await interaction.reply({ content: "แอดมินยังไม่ได้ตั้งค่าระบบ ใช้ /แต่งงาน setup ก่อนครับ", ephemeral: true }); return;
-          }
-          if (interaction.channelId !== settings.requestChannelId) {
-            await interaction.reply({ content: "กรุณาใช้คำสั่งนี้ในห้องขอเป็นแฟนที่กำหนดไว้ครับ", ephemeral: true }); return;
-          }
-          const target = interaction.options.getUser("member", true);
-          if (target.bot || target.id === interaction.user.id) {
-            await interaction.reply({ content: "ไม่สามารถเลือกตัวเองหรือบอทเป็นคู่รักได้ครับ", ephemeral: true }); return;
-          }
-          if (findCupidCouple(interaction.guildId, interaction.user.id) || findCupidCouple(interaction.guildId, target.id)) {
-            await interaction.reply({ content: "คุณหรือสมาชิกที่เลือกมีคู่รักอยู่แล้วครับ", ephemeral: true }); return;
-          }
-          const busy = cupidData.pending.some(p => p.guildId === interaction.guildId && [p.fromId, p.toId].some(id => id === interaction.user.id || id === target.id));
-          if (busy) { await interaction.reply({ content: "คุณหรือสมาชิกที่เลือกมีคำขอที่กำลังรอการตอบรับอยู่แล้วครับ", ephemeral: true }); return; }
-          const requestId = `${Date.now()}-${interaction.user.id.slice(-5)}`;
-          const request = { id: requestId, guildId: interaction.guildId, fromId: interaction.user.id, toId: target.id, createdAt: Date.now() };
-          const requestEmbed = new EmbedBuilder().setColor(0xD4AF37).setTitle("💌 ON KING CUPID • คำขอเป็นแฟน")
-            .setDescription(`<@${interaction.user.id}> กำลังขอเป็นแฟนกับ <@${target.id}>\n\nมีเพียงสมาชิกที่ถูกขอเท่านั้นที่สามารถตอบรับหรือปฏิเสธได้ครับ`)
-            .setFooter({ text: "ON KING CUPID • LOVE IN THE KINGDOM" }).setTimestamp();
-          const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`cupid_accept:${requestId}`).setLabel("ตอบรับ").setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`cupid_decline:${requestId}`).setLabel("ปฏิเสธ").setStyle(ButtonStyle.Danger)
-          );
-          const message = await interaction.channel.send({ content: `<@${target.id}>`, embeds: [requestEmbed], components: [row] });
-          request.messageId = message.id; request.channelId = message.channelId; cupidData.pending.push(request);
-          try { saveCupidData(); } catch (error) { await message.delete().catch(() => {}); throw error; }
-          await interaction.reply({ content: `ส่งคำขอเป็นแฟนไปยัง ${target} แล้วครับ รออีกฝ่ายตอบรับได้เลย 💛`, ephemeral: true }); return;
-        }
-        if (subcommand === "status") {
-          const target = interaction.options.getUser("member") || interaction.user;
-          const couple = findCupidCouple(interaction.guildId, target.id);
-          if (!couple) { await interaction.reply({ content: `${target.id === interaction.user.id ? "คุณ" : target.username} ยังไม่มีสถานะคู่รักใน ON KING CUPID ครับ`, ephemeral: true }); return; }
-          await interaction.reply({ content: `💍 <@${couple.user1}> เป็นคู่รักกับ <@${couple.user2}> ตั้งแต่ ${cupidDate(couple.createdAt)} ครับ`, ephemeral: true }); return;
-        }
-        if (subcommand === "divorce") {
-          const index = cupidData.couples.findIndex(c => c.guildId === interaction.guildId && (c.user1 === interaction.user.id || c.user2 === interaction.user.id));
-          if (index < 0) { await interaction.reply({ content: "คุณยังไม่มีสถานะคู่รักใน ON KING CUPID ครับ", ephemeral: true }); return; }
-          const couple = cupidData.couples[index]; couple.endedAt = Date.now(); cupidData.couples.splice(index, 1); saveCupidData();
-          const channel = couple.cardChannelId ? interaction.guild.channels.cache.get(couple.cardChannelId) || await interaction.guild.channels.fetch(couple.cardChannelId).catch(() => null) : null;
-          if (channel && couple.cardMessageId) {
-            const cardMessage = await channel.messages.fetch(couple.cardMessageId).catch(() => null);
-            if (cardMessage) await cardMessage.edit({ embeds: [createCupidCard(couple, true)] }).catch(() => {});
-          }
-          await interaction.reply({ content: "ยุติสถานะคู่รักเรียบร้อยแล้วครับ การ์ดเดิมจะเปลี่ยนเป็นสถานะสิ้นสุดความสัมพันธ์ 💛", ephemeral: true }); return;
-        }
-      }
-
       if (interaction.commandName === "sweetmatch") {
         const subcommand = interaction.options.getSubcommand();
 
