@@ -134,12 +134,35 @@ async function makeRequest(interaction, type, targetId) {
   r.channelId = ch.id; r.messageId = m.id; data.pending.push(r); save(); schedule(r);
   await interaction.reply({ content: "ส่งคำขอแล้วครับ อีกฝ่ายมีเวลา 1 ชั่วโมงในการยืนยัน", ephemeral: true });
 }
-const commands = [new SlashCommandBuilder().setName("cupid-setup").setDescription("ตั้งค่าห้องคำขอและห้องประกาศ ON KING CUPID").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-  .addChannelOption(o => o.setName("marriage_request").setDescription("ห้องคำขอแต่งงาน").addChannelTypes(ChannelType.GuildText).setRequired(true))
-  .addChannelOption(o => o.setName("marriage_announcement").setDescription("ห้องประกาศแต่งงาน").addChannelTypes(ChannelType.GuildText).setRequired(true))
-  .addChannelOption(o => o.setName("divorce_request").setDescription("ห้องคำขอหย่าร้าง").addChannelTypes(ChannelType.GuildText).setRequired(true))
-  .addChannelOption(o => o.setName("divorce_announcement").setDescription("ห้องประกาศหย่าร้าง").addChannelTypes(ChannelType.GuildText).setRequired(true)).toJSON()];
+const commands = [
+  new SlashCommandBuilder().setName("cupid-setup").setDescription("ตั้งค่าห้องคำขอและห้องประกาศ ON KING CUPID").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addChannelOption(o => o.setName("marriage_request").setDescription("ห้องคำขอแต่งงาน").addChannelTypes(ChannelType.GuildText).setRequired(true))
+    .addChannelOption(o => o.setName("marriage_announcement").setDescription("ห้องประกาศแต่งงาน").addChannelTypes(ChannelType.GuildText).setRequired(true))
+    .addChannelOption(o => o.setName("divorce_request").setDescription("ห้องคำขอหย่าร้าง").addChannelTypes(ChannelType.GuildText).setRequired(true))
+    .addChannelOption(o => o.setName("divorce_announcement").setDescription("ห้องประกาศหย่าร้าง").addChannelTypes(ChannelType.GuildText).setRequired(true)).toJSON(),
+  new SlashCommandBuilder().setName("checkcouple").setDescription("ตรวจสอบสถานะคู่รัก ON KING CUPID")
+    .addUserOption(o => o.setName("member").setDescription("สมาชิกที่ต้องการตรวจสอบ").setRequired(false)).toJSON()
+];
 async function handle(i) {
+  if (i.isChatInputCommand() && i.commandName === "checkcouple") {
+    const target = i.options.getUser("member") || i.user;
+    const c = coupleFor(i.guildId, target.id);
+    if (!c) {
+      await i.reply({ content: "💛 <@" + target.id + "> ยังไม่มีสถานะคู่รักใน ON KING CUPID ครับ", ephemeral: true });
+      return true;
+    }
+    const partnerId = c.user1 === target.id ? c.user2 : c.user1;
+    await i.reply({
+      embeds: [new EmbedBuilder().setColor(0xD4AF37).setTitle("💍 ON KING CUPID • ตรวจสอบคู่รัก")
+        .setDescription("<@" + target.id + "> ♡ <@" + partnerId + ">")
+        .addFields({ name: "สมาชิกที่ตรวจสอบ", value: "<@" + target.id + ">", inline: true },
+          { name: "คู่รัก", value: "<@" + partnerId + ">", inline: true },
+          { name: "วันที่เริ่มต้น", value: new Date(c.createdAt).toLocaleDateString("th-TH", { timeZone: "Asia/Bangkok" }) })
+        .setFooter({ text: "ON KING COMMUNITY • LOVE IN THE KINGDOM" }).setTimestamp(c.createdAt)],
+      ephemeral: false
+    });
+    return true;
+  }
   if (i.isChatInputCommand() && i.commandName === "cupid-setup") {
     const c = { marriageRequestChannelId: i.options.getChannel("marriage_request", true), marriageAnnouncementChannelId: i.options.getChannel("marriage_announcement", true), divorceRequestChannelId: i.options.getChannel("divorce_request", true), divorceAnnouncementChannelId: i.options.getChannel("divorce_announcement", true) };
     const me = await i.guild.members.fetchMe(), needed = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
