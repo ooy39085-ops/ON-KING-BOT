@@ -19,6 +19,7 @@ const {
 
 const { restoreVoicePresence, setPermanentVoiceChannel } = require("./voice-presence");
 const { musicCommands, handleMusicInteraction } = require("./music");
+const { startDashboardApi } = require("./dashboard-api");
 const token = process.env.DISCORD_BOT_TOKEN;
 const syncSecret = process.env.DISCORD_SYNC_SECRET;
 const supabaseUrl = (process.env.SUPABASE_URL || "https://alfaddeavpefqobspvxt.supabase.co").replace(/\/$/, "");
@@ -1196,6 +1197,8 @@ client.on(Events.Error, (error) => {
 process.on("unhandledRejection", (error) => {
   console.error("Unhandled promise rejection:", error);
 });
+
+startDashboardApi(client);
 
 client.login(token).catch((error) => {
   console.error("เข้าสู่ระบบ Discord ไม่สำเร็จ:", error.message);
