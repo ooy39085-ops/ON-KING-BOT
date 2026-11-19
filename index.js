@@ -299,7 +299,7 @@ async function removeFromQueue(guildId, userId) {
   const index = queue.findIndex(entry => entry.userId === userId);
   if (index < 0) return null;
   const [entry] = queue.splice(index, 1);
-  clearTimeout(entry.timer);
+  clearInterval(entry.timer);
   return entry;
 }
 
@@ -344,7 +344,7 @@ async function tryMatch(guild, newEntry) {
   if (partnerIndex < 0) return false;
 
   const [partner] = queue.splice(partnerIndex, 1);
-  clearTimeout(partner.timer);
+  clearInterval(partner.timer);
   const current = await removeFromQueue(guild.id, newEntry.userId);
   if (!current) {
     queue.push(partner);
@@ -1027,6 +1027,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  const waitingVoiceId = sweetSettings[oldState.guild.id]?.waitingVoiceChannelId;
+  if (oldState.channelId === waitingVoiceId && newState.channelId !== waitingVoiceId) {
+    const queued = await removeFromQueue(oldState.guild.id, oldState.id);
+    if (queued) {
+      await queued.interaction.editReply({
+        content: "คุณออกจากห้องเสียงรอจับคู่แล้ว ระบบจึงยกเลิกการค้นหาให้ครับ หากต้องการจับคู่อีกครั้งให้กลับเข้าห้องรอจับคู่",
+        components: []
+      }).catch(() => {});
+    }
+  }
   if (newState.channelId && oldState.channelId !== newState.channelId) {
     const waitingVoiceId = sweetSettings[newState.guild.id]?.waitingVoiceChannelId;
     const selection = selections.get(newState.id);
