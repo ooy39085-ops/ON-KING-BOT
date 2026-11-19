@@ -13,6 +13,16 @@ try {
     data = { settings: saved.settings || {}, couples: Array.isArray(saved.couples) ? saved.couples : [], pending: Array.isArray(saved.pending) ? saved.pending : [] };
   }
 } catch (e) { console.error("อ่านข้อมูล CUPID ไม่สำเร็จ:", e.message); }
+for (const [guildId, settings] of Object.entries(data.settings)) {
+  if (!settings.marriageRequestChannelId && settings.requestChannelId) settings.marriageRequestChannelId = settings.requestChannelId;
+  if (!settings.marriageAnnouncementChannelId && settings.cardChannelId) settings.marriageAnnouncementChannelId = settings.cardChannelId;
+  if (!settings.divorceAnnouncementChannelId && settings.breakupChannelId) settings.divorceAnnouncementChannelId = settings.breakupChannelId;
+  if (!settings.divorceRequestChannelId && settings.breakupChannelId) settings.divorceRequestChannelId = settings.breakupChannelId;
+}
+for (const req of data.pending) {
+  if (!req.type) req.type = "marriage";
+  if (!req.expiresAt) req.expiresAt = Number(req.createdAt || Date.now()) + TTL;
+}
 function save() { const tmp = FILE + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(data, null, 2)); fs.renameSync(tmp, FILE); }
 function coupleFor(gid, uid) { return data.couples.find(c => c.guildId === gid && (c.user1 === uid || c.user2 === uid)); }
 function remaining(ts) { const ms = Math.max(0, ts - Date.now()); return Math.floor(ms / 60000) + " นาที " + Math.floor(ms % 60000 / 1000) + " วินาที"; }
