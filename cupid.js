@@ -231,7 +231,12 @@ async function handle(i) {
     if (i.customId.startsWith("cupid_yes:") || i.customId.startsWith("cupid_no:") || i.customId.startsWith("cupid_accept:") || i.customId.startsWith("cupid_decline:")) {
       const parts = i.customId.split(":"), r = data.pending.find(x => x.id === parts[1] && x.guildId === i.guildId);
       if (!r) { await i.reply({ content: "คำขอนี้หมดเวลาหรือถูกดำเนินการแล้วครับ", ephemeral: true }); return true; }
-      if (Date.now() >= r.expiresAt) { await complete(r, "expired"); await i.reply({ content: "คำขอนี้หมดเวลาแล้วครับ", ephemeral: true }); return true; }
+      if (Date.now() >= r.expiresAt) {
+        await i.deferReply({ ephemeral: true });
+        await complete(r, "expired");
+        await i.editReply({ content: "คำขอนี้หมดเวลาแล้วครับ" });
+        return true;
+      }
       if (i.user.id !== r.toId) { await i.reply({ content: "เฉพาะสมาชิกที่ได้รับคำขอเท่านั้นที่กดตอบได้ครับ", ephemeral: true }); return true; }
       await i.deferUpdate(); await complete(r, (parts[0] === "cupid_yes" || parts[0] === "cupid_accept") ? "accepted" : "declined"); return true;
     }
