@@ -63,7 +63,7 @@ async function renderRelationshipCard(client, relationship, ended = false) {
   const b = await client.users.fetch(relationship.user2).catch(() => null);
   const date = new Date(ended ? relationship.endedAt : relationship.createdAt);
   const dateText = date.toLocaleString("th-TH", { timeZone: "Asia/Bangkok", dateStyle: "long", timeStyle: "short" });
-  const baseUrl = String(process.env.ONKING_CUPID_CARD_TEMPLATE_BASE_URL || "https://onking1510u.netlify.app/assets/cupid").replace(/\\/$/, "");
+  const baseUrl = String(process.env.ONKING_CUPID_CARD_TEMPLATE_BASE_URL || "https://onking1510u.netlify.app/assets/cupid").replace(/\/$/, "");
   const templateUrl = baseUrl + (ended ? "/on-king-divorce-card.png" : "/on-king-couple-card.png");
   let base;
   try {
