@@ -59,37 +59,89 @@ async function messageFor(r) {
 async function complete(r, result) {
   const idx = data.pending.findIndex(x => x.id === r.id);
   if (idx < 0) return;
-  data.pending.splice(idx, 1); save();
+  let outcome = result;
+  let relationship = null;
+
+  // Persist the relationship change together with request removal before any
+  // Discord network calls, so a restart cannot lose an accepted request.
+  if (result === "accepted" && r.type === "marriage") {
+    if (coupleFor(r.guildId, r.fromId) || coupleFor(r.guildId, r.toId)) {
+      outcome = "conflict";
+    } else {
+      relationship = { guildId: r.guildId, user1: r.fromId, user2: r.toId, createdAt: Date.now() };
+      data.couples.push(relationship);
+    }
+  } else if (result === "accepted" && r.type === "divorce") {
+    const coupleIndex = data.couples.findIndex(c => c.guildId === r.guildId &&
+      ((c.user1 === r.fromId && c.user2 === r.toId) || (c.user2 === r.fromId && c.user1 === r.toId)));
+    if (coupleIndex < 0) {
+      outcome = "invalid";
+    } else {
+      relationship = data.couples[coupleIndex];
+      relationship.endedAt = Date.now();
+      data.couples.splice(coupleIndex, 1);
+    }
+  }
+
+  data.pending.splice(idx, 1);
+  save();
+  const timer = timers.get(r.id);
+  if (timer) clearInterval(timer);
+  timers.delete(r.id);
+
   const msg = await messageFor(r);
-  const finalEmbed = result === "expired" ? embedFor(r, true) :
-    new EmbedBuilder().setColor(result === "accepted" ? 0xD4AF37 : 0x777777)
-      .setTitle(result === "accepted" ? "ON KING CUPID • ยืนยันเรียบร้อย" : "ON KING CUPID • คำขอถูกปฏิเสธ")
-      .setDescription(result === "accepted" ? "ดำเนินการเรียบร้อยสำหรับ <@" + r.fromId + "> และ <@" + r.toId + ">" : "<@" + r.toId + "> ปฏิเสธคำขอจาก <@" + r.fromId + ">").setTimestamp();
+  let finalEmbed;
+  if (outcome === "expired") {
+    finalEmbed = embedFor(r, true);
+  } else if (outcome === "accepted") {
+    finalEmbed = new EmbedBuilder().setColor(0xD4AF37)
+      .setTitle("ON KING CUPID • ยืนยันเรียบร้อย")
+      .setDescription("ดำเนินการเรียบร้อยสำหรับ <@" + r.fromId + "> และ <@" + r.toId + ">").setTimestamp();
+  } else if (outcome === "conflict") {
+    finalEmbed = new EmbedBuilder().setColor(0x777777)
+      .setTitle("ON KING CUPID • ไม่สามารถสร้างคู่รักได้")
+      .setDescription("ไม่สามารถยืนยันคำขอได้ เพราะสมาชิกคนใดคนหนึ่งมีคู่รักอยู่แล้วครับ").setTimestamp();
+  } else if (outcome === "invalid") {
+    finalEmbed = new EmbedBuilder().setColor(0x777777)
+      .setTitle("ON KING CUPID • ไม่พบสถานะคู่สมรส")
+      .setDescription("ไม่สามารถยืนยันการหย่าร้างได้ เพราะไม่พบสถานะคู่สมรสเดิมครับ").setTimestamp();
+  } else {
+    finalEmbed = new EmbedBuilder().setColor(0x777777)
+      .setTitle("ON KING CUPID • คำขอถูกปฏิเสธ")
+      .setDescription("<@" + r.toId + "> ปฏิเสธคำขอจาก <@" + r.fromId + ">").setTimestamp();
+  }
   if (msg) await msg.edit({ embeds: [finalEmbed], components: buttons(r, true) }).catch(() => {});
+
+  const notice = outcome === "expired" ? "⌛ คำขอ ON KING CUPID หมดเวลา 1 ชั่วโมงแล้วครับ"
+    : outcome === "accepted" ? (r.type === "marriage" ? "💛 คำขอแต่งงาน ON KING CUPID ได้รับการยืนยันแล้วครับ" : "💛 คำขอหย่าร้าง ON KING CUPID ได้รับการยืนยันแล้วครับ")
+    : outcome === "conflict" || outcome === "invalid" ? "ไม่สามารถดำเนินการตามคำขอ ON KING CUPID ได้ครับ"
+    : "คำขอ ON KING CUPID ถูกปฏิเสธครับ";
   for (const uid of [r.fromId, r.toId]) {
     const u = await clientRef.users.fetch(uid).catch(() => null);
-    if (u) await u.send(result === "expired" ? "⌛ คำขอ ON KING CUPID หมดเวลา 1 ชั่วโมงแล้วครับ" : result === "accepted" ? "💛 คำขอ ON KING CUPID ได้รับการยืนยันแล้วครับ" : "คำขอ ON KING CUPID ถูกปฏิเสธครับ").catch(() => {});
+    if (u) await u.send(notice).catch(() => {});
   }
-  const timer = timers.get(r.id); if (timer) clearInterval(timer); timers.delete(r.id);
-  if (result !== "accepted") return;
-  const guild = clientRef.guilds.cache.get(r.guildId); if (!guild) return;
+
+  if (outcome !== "accepted" || !relationship) return;
+  const guild = clientRef.guilds.cache.get(r.guildId);
+  if (!guild) return;
   if (r.type === "marriage") {
-    if (coupleFor(r.guildId, r.fromId) || coupleFor(r.guildId, r.toId)) return;
-    const c = { guildId: r.guildId, user1: r.fromId, user2: r.toId, createdAt: Date.now() };
-    data.couples.push(c); save();
     const chId = data.settings[r.guildId]?.marriageAnnouncementChannelId;
     const ch = chId ? await guild.channels.fetch(chId).catch(() => null) : null;
-    if (ch && ch.isTextBased()) { const posted = await ch.send({ embeds: [card(c, false)] }).catch(() => null); if (posted) { c.cardChannelId = ch.id; c.cardMessageId = posted.id; save(); } }
+    if (ch && ch.isTextBased()) {
+      const posted = await ch.send({ embeds: [card(relationship, false)] }).catch(() => null);
+      if (posted) {
+        relationship.cardChannelId = ch.id;
+        relationship.cardMessageId = posted.id;
+        save();
+      }
+    }
   } else {
-    const i = data.couples.findIndex(c => c.guildId === r.guildId && ((c.user1 === r.fromId && c.user2 === r.toId) || (c.user2 === r.fromId && c.user1 === r.toId)));
-    if (i < 0) return;
-    const c = data.couples[i]; c.endedAt = Date.now(); data.couples.splice(i, 1); save();
-    const old = c.cardChannelId ? await guild.channels.fetch(c.cardChannelId).catch(() => null) : null;
-    const oldMsg = old && c.cardMessageId ? await old.messages.fetch(c.cardMessageId).catch(() => null) : null;
-    if (oldMsg) await oldMsg.edit({ embeds: [card(c, true)] }).catch(() => {});
+    const old = relationship.cardChannelId ? await guild.channels.fetch(relationship.cardChannelId).catch(() => null) : null;
+    const oldMsg = old && relationship.cardMessageId ? await old.messages.fetch(relationship.cardMessageId).catch(() => null) : null;
+    if (oldMsg) await oldMsg.edit({ embeds: [card(relationship, true)] }).catch(() => {});
     const chId = data.settings[r.guildId]?.divorceAnnouncementChannelId;
     const ch = chId ? await guild.channels.fetch(chId).catch(() => null) : null;
-    if (ch && ch.isTextBased()) await ch.send({ embeds: [card(c, true)] }).catch(() => {});
+    if (ch && ch.isTextBased()) await ch.send({ embeds: [card(relationship, true)] }).catch(() => {});
   }
 }
 function schedule(r) {
