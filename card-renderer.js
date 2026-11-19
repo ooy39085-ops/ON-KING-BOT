@@ -63,12 +63,42 @@ async function renderRelationshipCard(client, relationship, ended = false) {
   const b = await client.users.fetch(relationship.user2).catch(() => null);
   const date = new Date(ended ? relationship.endedAt : relationship.createdAt);
   const dateText = date.toLocaleString("th-TH", { timeZone: "Asia/Bangkok", dateStyle: "long", timeStyle: "short" });
-  const base = makeSvg(a?.globalName || a?.username || "สมาชิก 1", b?.globalName || b?.username || "สมาชิก 2", dateText, ended, cfg);
-  const layers = [{ input: base }];
+  const baseUrl = String(process.env.ONKING_CUPID_CARD_TEMPLATE_BASE_URL || "https://onking1510u.netlify.app/assets/cupid").replace(/\\/$/, "");
+  const templateUrl = baseUrl + (ended ? "/on-king-divorce-card.png" : "/on-king-couple-card.png");
+  let base;
+  try {
+    const response = await fetch(templateUrl);
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    base = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    console.warn("ไม่สามารถโหลดภาพต้นแบบ CUPID ได้ ใช้พื้นหลังสำรอง:", error.message);
+    base = await sharp(makeSvg(a?.username || "สมาชิก 1", b?.username || "สมาชิก 2", dateText, ended, cfg)).png().toBuffer();
+  }
+  const bg1 = color(ended ? cfg.divorceBackground1 : cfg.coupleBackground1, ended ? "#160a12" : "#ff4f91");
+  const bg2 = color(ended ? cfg.divorceBackground2 : cfg.coupleBackground2, ended ? "#08090e" : "#2b0922");
+  const accent = color(cfg.accent, "#e8bd63");
+  const title = esc(ended ? (cfg.divorceTitle || "Divorce") : (cfg.coupleTitle || "Couple"));
+  const message = esc(ended ? (cfg.divorceMessage || "สิ้นสุดความสัมพันธ์") : (cfg.coupleMessage || "เริ่มคบกันเมื่อ"));
+  const footer = esc(ended ? (cfg.divorceFooter || "ขอบคุณทุกช่วงเวลาที่เคยมีร่วมกัน") : (cfg.coupleFooter || "ขอให้รักนี้อยู่เคียงข้างกันตลอดไป"));
+  const tint = Buffer.from(`<svg width="1536" height="512" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="t" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${bg1}" stop-opacity=".25"/><stop offset="1" stop-color="${bg2}" stop-opacity=".30"/></linearGradient></defs><rect width="1536" height="512" fill="url(#t)"/></svg>`);
+  const overlay = Buffer.from(`<svg width="1536" height="512" xmlns="http://www.w3.org/2000/svg">
+    <defs><filter id="shadow"><feGaussianBlur stdDeviation="3"/></filter></defs>
+    <rect x="600" y="112" width="336" height="88" rx="24" fill="#10070d" fill-opacity=".35"/>
+    <text x="768" y="177" text-anchor="middle" font-family="Georgia,serif" font-size="54" font-style="italic" font-weight="bold" fill="${accent}" stroke="#210b16" stroke-width="1">${title}</text>
+    <rect x="586" y="344" width="364" height="43" rx="12" fill="#08060a" fill-opacity=".88" stroke="${accent}" stroke-width="2"/>
+    <text x="768" y="374" text-anchor="middle" font-family="sans-serif" font-size="23" font-weight="bold" fill="#fff1d1">${message}</text>
+    <rect x="574" y="392" width="388" height="39" rx="10" fill="#08060a" fill-opacity=".90" stroke="${accent}" stroke-width="1.5"/>
+    <text x="768" y="418" text-anchor="middle" font-family="sans-serif" font-size="19" font-weight="bold" fill="#fff">${esc(dateText)}</text>
+    <text x="322" y="402" text-anchor="middle" font-family="sans-serif" font-size="25" font-weight="bold" fill="#fff" stroke="#190811" stroke-width="1">${esc(a?.globalName || a?.username || "สมาชิก 1")}</text>
+    <text x="1214" y="402" text-anchor="middle" font-family="sans-serif" font-size="25" font-weight="bold" fill="#fff" stroke="#190811" stroke-width="1">${esc(b?.globalName || b?.username || "สมาชิก 2")}</text>
+    <rect x="470" y="454" width="596" height="42" rx="12" fill="#08060a" fill-opacity=".78"/>
+    <text x="768" y="483" text-anchor="middle" font-family="sans-serif" font-size="23" font-weight="bold" fill="${accent}">${footer}</text>
+  </svg>`);
+  const layers = [{ input: base }, { input: tint, blend: "soft-light" }, { input: overlay }];
   const avatarSize = 244;
   const left = await avatarBuffer(a), right = await avatarBuffer(b);
-  if (left) layers.push({ input: await circleAvatar(left, avatarSize), left: 200, top: 108 });
-  if (right) layers.push({ input: await circleAvatar(right, avatarSize), left: 1092, top: 108 });
+  if (left) layers.push({ input: await circleAvatar(left, avatarSize), left: 200, top: 98 });
+  if (right) layers.push({ input: await circleAvatar(right, avatarSize), left: 1092, top: 98 });
   return sharp({ create: { width: 1536, height: 512, channels: 4, background: "#08080a" } }).composite(layers).png().toBuffer();
 }
 module.exports = { renderRelationshipCard, readSettings };
