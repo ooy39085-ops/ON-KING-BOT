@@ -7,12 +7,13 @@ const PORT = Number(process.env.PORT || 8080);
 const SUPABASE_URL = (process.env.SUPABASE_URL || "https://alfaddeavpefqobspvxt.supabase.co").replace(/\/$/, "");
 const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || "";
 const ALLOWED_ORIGINS = (process.env.DASHBOARD_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean);
+const mutationWindows = new Map();
 
 function sendJson(response, status, payload, origin) {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-    ...(origin ? { "Access-Control-Allow-Origin": origin, "Vary": "Origin", "Access-Control-Allow-Credentials": "true" } : {})
+    ...(origin ? { "Access-Control-Allow-Origin": origin, "Vary": "Origin" } : {})
   });
   response.end(JSON.stringify(payload));
 }
@@ -20,20 +21,42 @@ function sendJson(response, status, payload, origin) {
 function readJson(request) {
   return new Promise((resolve, reject) => {
     let raw = "";
+    let rejected = false;
     request.on("data", chunk => {
-      raw += chunk;
-      if (raw.length > 32 * 1024) {
-        reject(new Error("คำขอมีขนาดใหญ่เกินไป"));
-        request.destroy();
+      if (rejected) return;
+      raw += chunk.toString("utf8");
+      if (Buffer.byteLength(raw, "utf8") > 32 * 1024) {
+        rejected = true;
+        reject(Object.assign(new Error("คำขอมีขนาดใหญ่เกินไป"), { status: 413 }));
+        request.resume();
       }
     });
     request.on("end", () => {
+      if (rejected) return;
       if (!raw) return resolve({});
       try { resolve(JSON.parse(raw)); }
-      catch { reject(new Error("รูปแบบ JSON ไม่ถูกต้อง")); }
+      catch { reject(Object.assign(new Error("รูปแบบ JSON ไม่ถูกต้อง"), { status: 400 })); }
     });
-    request.on("error", reject);
+    request.on("error", error => {
+      if (!rejected) reject(error);
+    });
   });
+}
+
+function enforceMutationLimit(request, userId) {
+  const key = String(userId || request.socket.remoteAddress || "unknown");
+  const now = Date.now();
+  const current = mutationWindows.get(key);
+  if (!current || now - current.startedAt >= 60_000) {
+    mutationWindows.set(key, { startedAt: now, count: 1 });
+    return;
+  }
+  current.count += 1;
+  if (current.count > 10) {
+    const error = new Error("ส่งคำสั่งถี่เกินไป กรุณารอสักครู่แล้วลองใหม่");
+    error.status = 429;
+    throw error;
+  }
 }
 
 async function getAuthenticatedAdmin(request) {
@@ -80,15 +103,14 @@ async function getAuthenticatedAdmin(request) {
   }
 
   const roles = await rolesResponse.json();
-  const allowed = Array.isArray(roles) && roles.some(item =>
-    ["owner", "admin"].includes(String(item.role || "").toLowerCase())
-  );
-  if (!allowed) {
+  const roleNames = Array.isArray(roles) ? roles.map(item => String(item.role || "").toLowerCase()) : [];
+  const role = roleNames.includes("owner") ? "owner" : roleNames.includes("admin") ? "admin" : "";
+  if (!role) {
     const error = new Error("หน้านี้อนุญาตเฉพาะ Owner และ Admin เท่านั้น");
     error.status = 403;
     throw error;
   }
-  return user;
+  return { user, role };
 }
 
 function getGuild(client, guildId) {
@@ -114,7 +136,7 @@ async function handleRequest(request, response, client) {
   if (origin && !allowedOrigin) return sendJson(response, 403, { error: "Origin นี้ไม่ได้รับอนุญาต" });
   if (request.method === "OPTIONS") {
     response.writeHead(204, {
-      ...(allowedOrigin ? { "Access-Control-Allow-Origin": allowedOrigin, "Access-Control-Allow-Credentials": "true", "Vary": "Origin" } : {}),
+      ...(allowedOrigin ? { "Access-Control-Allow-Origin": allowedOrigin, "Vary": "Origin" } : {}),
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Authorization, Content-Type",
       "Access-Control-Max-Age": "600"
@@ -130,17 +152,21 @@ async function handleRequest(request, response, client) {
   }
 
   try {
-    await getAuthenticatedAdmin(request);
+    const actor = await getAuthenticatedAdmin(request);
 
     if (request.method === "GET" && requestUrl.pathname === "/api/dashboard") {
       const guilds = [...client.guilds.cache.values()];
       const guildList = guilds.map(guild => ({
         id: guild.id, name: guild.name, icon: guild.iconURL({ size: 64 }), memberCount: guild.memberCount || 0
       }));
+      const online = Boolean(client.isReady() && client.user);
       return sendJson(response, 200, {
         ok: true,
-        status: client.isReady() ? "online" : "starting",
+        actorRole: actor.role,
+        status: online ? "online" : "starting",
         bot: {
+          online,
+          status: online ? "online" : "starting",
           id: client.user ? client.user.id : null,
           username: client.user ? client.user.username : "ON KING BOT",
           tag: client.user ? client.user.tag : null,
@@ -163,23 +189,27 @@ async function handleRequest(request, response, client) {
     }
 
     if (request.method === "POST" && requestUrl.pathname === "/api/presence") {
+      enforceMutationLimit(request, actor.user.id);
       const body = await readJson(request);
-      if (!client.user) return sendJson(response, 503, { error: "บอทยังเชื่อมต่อ Discord ไม่สำเร็จ" }, allowedOrigin);
+      if (!client.user || !client.isReady()) return sendJson(response, 503, { error: "บอทยังเชื่อมต่อ Discord ไม่สำเร็จ" }, allowedOrigin);
 
       const statuses = ["online", "idle", "dnd", "invisible"];
-      const types = { Playing: 0, Streaming: 1, Listening: 2, Watching: 3, Competing: 5 };
-      const status = statuses.includes(body.status) ? body.status : "online";
-      const typeName = Object.prototype.hasOwnProperty.call(types, body.type) ? body.type : "Watching";
+      const types = { watching: 3, playing: 0, listening: 2, competing: 5 };
+      const status = statuses.includes(String(body.status || "").toLowerCase()) ? String(body.status).toLowerCase() : "online";
+      const typeName = String(body.type || "watching").toLowerCase();
+      const activityType = Object.prototype.hasOwnProperty.call(types, typeName) ? types[typeName] : types.watching;
       const activity = String(body.activity || body.name || "ON KING COMMUNITY").trim().slice(0, 128);
       client.user.setPresence({
         status,
-        activities: activity ? [{ name: activity, type: types[typeName] }] : []
+        activities: activity ? [{ name: activity, type: activityType }] : []
       });
-      return sendJson(response, 200, { ok: true, status, activity, type: typeName }, allowedOrigin);
+      return sendJson(response, 200, { ok: true, status, activity, type: typeName, message: "บันทึกสถานะบอทเรียบร้อยแล้ว" }, allowedOrigin);
     }
 
     if (request.method === "POST" && requestUrl.pathname === "/api/message") {
+      enforceMutationLimit(request, actor.user.id);
       const body = await readJson(request);
+      if (!client.isReady()) return sendJson(response, 503, { error: "บอทยังเชื่อมต่อ Discord ไม่สำเร็จ" }, allowedOrigin);
       const guild = getGuild(client, body.guildId);
       const channel = await guild.channels.fetch(String(body.channelId || "")).catch(() => null);
       const message = String(body.message || body.content || "").trim();
@@ -190,7 +220,10 @@ async function handleRequest(request, response, client) {
         return sendJson(response, 400, { error: "ข้อความต้องมี 1–2,000 ตัวอักษร" }, allowedOrigin);
       }
       const sent = await channel.send({ content: message, allowedMentions: { parse: [] } });
-      return sendJson(response, 200, { ok: true, messageId: sent.id, channelId: channel.id, guildId: guild.id }, allowedOrigin);
+      return sendJson(response, 200, {
+        ok: true, messageId: sent.id, channelId: channel.id, guildId: guild.id,
+        message: "ส่งข้อความผ่าน ON KING BOT เรียบร้อยแล้ว"
+      }, allowedOrigin);
     }
 
     return sendJson(response, 404, { error: "ไม่พบ API endpoint นี้" }, allowedOrigin);
