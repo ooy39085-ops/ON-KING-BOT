@@ -153,12 +153,12 @@ async function handle(i) {
       await i.reply({ content: "เลือกสมาชิกที่ต้องการขอแต่งงานครับ", components: [new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId("cupid_pick_marriage").setPlaceholder("เลือกสมาชิก").setMinValues(1).setMaxValues(1))], ephemeral: true }); return true;
     }
     if (i.customId === "cupid_start_divorce") { await makeRequest(i, "divorce"); return true; }
-    if (i.customId.startsWith("cupid_yes:") || i.customId.startsWith("cupid_no:")) {
+    if (i.customId.startsWith("cupid_yes:") || i.customId.startsWith("cupid_no:") || i.customId.startsWith("cupid_accept:") || i.customId.startsWith("cupid_decline:")) {
       const parts = i.customId.split(":"), r = data.pending.find(x => x.id === parts[1] && x.guildId === i.guildId);
       if (!r) { await i.reply({ content: "คำขอนี้หมดเวลาหรือถูกดำเนินการแล้วครับ", ephemeral: true }); return true; }
       if (Date.now() >= r.expiresAt) { await complete(r, "expired"); await i.reply({ content: "คำขอนี้หมดเวลาแล้วครับ", ephemeral: true }); return true; }
       if (i.user.id !== r.toId) { await i.reply({ content: "เฉพาะสมาชิกที่ได้รับคำขอเท่านั้นที่กดตอบได้ครับ", ephemeral: true }); return true; }
-      await i.deferUpdate(); await complete(r, parts[0] === "cupid_yes" ? "accepted" : "declined"); return true;
+      await i.deferUpdate(); await complete(r, (parts[0] === "cupid_yes" || parts[0] === "cupid_accept") ? "accepted" : "declined"); return true;
     }
   }
   if (i.isUserSelectMenu() && i.customId === "cupid_pick_marriage") { await makeRequest(i, "marriage", i.values[0]); return true; }
