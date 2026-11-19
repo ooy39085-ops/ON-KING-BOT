@@ -18,7 +18,6 @@ const {
 } = require("discord.js");
 
 const { restoreVoicePresence, setPermanentVoiceChannel } = require("./voice-presence");
-const { musicCommands, handleMusicInteraction } = require("./music");
 const { startDashboardApi } = require("./dashboard-api");
 const cupid = require("./cupid");
 const token = process.env.DISCORD_BOT_TOKEN;
@@ -31,6 +30,20 @@ const searchQueues = new Map();       // guildId -> [{ userId, gender, preferenc
 const selections = new Map();         // userId -> { gender, preference }
 const activeMatches = new Map();      // voiceChannelId -> { guildId, userIds, ended }
 const activeUsers = new Map();        // userId -> voiceChannelId
+
+let sweetSettings = {};
+if (fs.existsSync(CONFIG_PATH)) {
+  try {
+    const savedSweetSettings = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    if (savedSweetSettings && typeof savedSweetSettings === "object" && !Array.isArray(savedSweetSettings)) sweetSettings = savedSweetSettings;
+    else console.error("รูปแบบ sweet-match-config.json ไม่ถูกต้อง");
+  } catch (error) { console.error("อ่านการตั้งค่า Sweet Match ไม่สำเร็จ:", error.message); }
+}
+
+if (!token) throw new Error("ไม่พบ DISCORD_BOT_TOKEN ใน Environment ของ Hostrix");
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildVoiceStates]
+});
 
 function saveSweetSettings() {
   const tempPath = `${CONFIG_PATH}.tmp`;
@@ -515,7 +528,6 @@ const commands = [
     )
     .toJSON(),
   ...cupid.commands,
-  ...musicCommands
 ];
 
 const rest = new REST({ version: "10" }).setToken(token);
@@ -713,9 +725,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (await cupid.handle(interaction)) return;
 
     if (interaction.isChatInputCommand()) {
-      const musicHandled = await handleMusicInteraction(interaction);
-      if (musicHandled) return;
-
       if (interaction.commandName === "ping") {
         const latency = Math.round(client.ws.ping);
         await interaction.reply(
