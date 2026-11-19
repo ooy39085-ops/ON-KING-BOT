@@ -279,8 +279,11 @@ async function tryMatch(guild, newEntry) {
   const firstMember = await guild.members.fetch(current.userId).catch(() => null);
   const secondMember = await guild.members.fetch(partner.userId).catch(() => null);
 
-  if (!firstMember || !secondMember || !firstMember.voice.channel || !secondMember.voice.channel) {
-    const message = "การจับคู่ยกเลิก เพราะสมาชิกคนใดคนหนึ่งไม่ได้อยู่ในห้องเสียงแล้ว กรุณาเข้าห้องเสียงและเริ่มใหม่";
+  const waitingVoiceChannelId = sweetSettings[guild.id]?.waitingVoiceChannelId;
+  if (!firstMember || !secondMember ||
+      firstMember.voice.channelId !== waitingVoiceChannelId ||
+      secondMember.voice.channelId !== waitingVoiceChannelId) {
+    const message = "การจับคู่ยกเลิก เพราะสมาชิกคนใดคนหนึ่งออกจากห้องเสียงรอจับคู่ กรุณากลับเข้าห้องรอแล้วเริ่มใหม่";
     await current.interaction.editReply({ content: message, components: [] }).catch(() => {});
     await partner.interaction.editReply({ content: message, components: [] }).catch(() => {});
     return true;
