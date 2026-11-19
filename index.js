@@ -488,26 +488,39 @@ async function beginSearch(interaction, selection) {
 
   const queue = getQueue(guild.id);
   queue.push(entry);
+  entry.expiresAt = Date.now() + SEARCH_TIMEOUT_MS;
+  const cancelRow = () => [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("sm_cancel")
+        .setLabel("ยกเลิกการค้นหา")
+        .setStyle(ButtonStyle.Danger)
+    )
+  ];
   await interaction.editReply({
-    content: "🔎 กำลังค้นหาคู่ที่ตรงกันทั้งสองฝ่าย... ระบบจะยกเลิกอัตโนมัติเมื่อครบ 3 นาที",
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("sm_cancel")
-          .setLabel("ยกเลิกการค้นหา")
-          .setStyle(ButtonStyle.Danger)
-      )
-    ]
+    content: "🔎 กำลังค้นหาคู่ที่ตรงกันทั้งสองฝ่าย... เหลือเวลา 3:00 นาที",
+    components: cancelRow()
   });
 
-  entry.timer = setTimeout(async () => {
-    const removed = await removeFromQueue(guild.id, entry.userId);
-    if (!removed) return;
+  entry.timer = setInterval(async () => {
+    const remaining = Math.max(0, entry.expiresAt - Date.now());
+    if (remaining <= 0) {
+      clearInterval(entry.timer);
+      const removed = await removeFromQueue(guild.id, entry.userId);
+      if (!removed) return;
+      await entry.interaction.editReply({
+        content: "⌛ ครบ 3 นาทีแล้วยังไม่พบคู่ที่ตรงกัน ระบบยกเลิกการค้นหาให้แล้วครับ",
+        components: []
+      }).catch(() => {});
+      return;
+    }
+    const minutes = Math.floor(remaining / 60000);
+    const seconds = Math.floor((remaining % 60000) / 1000);
     await entry.interaction.editReply({
-      content: "⌛ ครบ 3 นาทีแล้วยังไม่พบคู่ที่ตรงกัน ระบบยกเลิกการค้นหาให้แล้วครับ",
-      components: []
+      content: "🔎 กำลังค้นหาคู่ที่ตรงกันทั้งสองฝ่าย... เหลือเวลา " + minutes + ":" + String(seconds).padStart(2, "0") + " นาที",
+      components: cancelRow()
     }).catch(() => {});
-  }, SEARCH_TIMEOUT_MS);
+  }, 10000);
 
   await tryMatch(guild, entry);
 }
