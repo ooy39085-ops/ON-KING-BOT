@@ -6,7 +6,11 @@ const { URL } = require("node:url");
 const PORT = Number(process.env.PORT || 8080);
 const SUPABASE_URL = (process.env.SUPABASE_URL || "https://alfaddeavpefqobspvxt.supabase.co").replace(/\/$/, "");
 const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || "";
-const ALLOWED_ORIGINS = (process.env.DASHBOARD_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean);
+const DEFAULT_DASHBOARD_ORIGINS = ["https://onking1510u.netlify.app"];
+const ALLOWED_ORIGINS = [...new Set([
+  ...DEFAULT_DASHBOARD_ORIGINS,
+  ...(process.env.DASHBOARD_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean)
+])];
 const mutationWindows = new Map();
 
 function sendJson(response, status, payload, origin) {
