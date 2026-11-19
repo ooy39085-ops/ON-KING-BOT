@@ -12,25 +12,24 @@ These are source-level observations, not claims that a live bot is currently run
 
 - **Main Discord bot** — `index.js`, using discord.js v14 and Node.js 20+.
 - **Sweet Match** — setup and panel slash commands, match creation/cleanup, temporary voice rooms, and active-match handling.
-- **ON KING CUPID** — relationship request/status, couple checking, breakup and marriage-related commands/data. Cupid data is stored separately in `on-king-cupid-data.json`.
+- **ON KING CUPID** — `/marriage @member` and `/breakup` send requests to the configured request rooms. Only the recipient can confirm/decline. Requests expire after one hour with a visible countdown; accepted marriages create a couple card and accepted divorces update the card and post a divorce notice. Cupid data is stored separately in `on-king-cupid-data.json`. Configure it with `/cupid-setup` and four different text channels: marriage request, marriage announcement, divorce request, and divorce announcement.
 - **Persistent voice presence** — `voice-presence.js` is loaded by the main bot; `/voice-room` has Thai localization `/ตั้งห้องออน`, requires Manage Server permission, and accepts a selected voice channel. Startup calls the voice-presence restore helper.
 - **Website/Supabase member sync** — source includes member add/update/remove handling and bulk sync logic. The existing ON KING Supabase project and its schema/policies are to be preserved.
 - **Owner/Admin Dashboard API** — `dashboard-api.js` exposes `/health`, `/api/dashboard`, `/api/channels`, `/api/presence`, and `/api/message`. Protected routes validate a Supabase bearer session and an Owner/Admin role in `user_roles`.
-- **Music source module** — `music.js` is present in this repository. However, the previously agreed product architecture separates music playback (YouTube, playlists, queue and controls) into a distinct **ON KING MUSIC** bot. Do not remove or migrate the current module until its dependencies and deployment are deliberately reviewed.
+- **Music playback** — explicitly removed from ON KING BOT at the owner’s request. Music slash commands, playback handler, `music.js`, music-only folders, and `play-dl` dependency are removed. `@discordjs/voice` remains because permanent voice presence and Sweet Match need it.
 
 ## 2. Agreed architecture and permissions
 
 ### Main ON KING BOT
 - Retain Sweet Match.
-- Retain ON KING CUPID.
+- Retain ON KING CUPID with `/marriage @member`, `/breakup`, one-hour confirmation countdowns, and separate request/announcement channels.
 - Retain website/Supabase member synchronization.
 - Retain persistent voice-room presence.
 - The voice-room selection is administrator-controlled; ordinary members must not be able to change it.
 - Preserve current user data and configuration JSON files.
 
-### Separate ON KING MUSIC
-- Music playback is intended to live in a separate bot.
-- Planned music scope: YouTube playback, playlists, queue, and playback controls.
+### Music removal
+- No music playback is part of ON KING BOT. Do not reintroduce music commands or playback dependencies unless the owner explicitly asks.
 - Migration must be staged so the existing main bot does not lose working functionality.
 
 ### Website Bot Center
@@ -48,8 +47,8 @@ These are source-level observations, not claims that a live bot is currently run
 4. **Authorization** — test Owner, Admin, and ordinary-member denial when live testing is approved. Keep the API's server-side Supabase session and `user_roles` checks.
 5. **Discord permissions** — verify bot permissions and selected guild/channel behavior using a controlled test after approval.
 6. **API resilience** — review rate limiting, request-size handling, readiness behavior, and useful error responses before exposing the API publicly.
-7. **Music split** — document and test the separate ON KING MUSIC deployment before changing/removing `music.js` from the main bot.
-8. **Data safety** — confirm backup/restore procedures for Sweet Match, Cupid, music, and voice-presence JSON data before any deployment that changes persistence.
+7. **Music removal** — verify no music command registrations, playback handlers, music module, or `play-dl` dependency remain.
+8. **Data safety** — confirm backup/restore procedures for Sweet Match, Cupid, and voice-presence JSON data before any deployment that changes persistence.
 
 ## 4. CI / static verification
 

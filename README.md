@@ -15,7 +15,7 @@ Discord bot for ON KING COMMUNITY.
 | --- | --- |
 | `index.js` | Main Discord bot, slash commands, Sweet Match, ON KING CUPID, member sync, voice-presence restore, Dashboard API startup |
 | `dashboard-api.js` | HTTP API for the website's Owner/Admin Bot Dashboard |
-| `music.js` | Existing music module in this repository; the agreed product direction is to keep music as a separate ON KING MUSIC bot, so migration/removal must be planned and reviewed rather than silently deleting this module |
+| `cupid.js` | ON KING CUPID marriage/divorce requests, confirmation buttons, countdowns, relationship cards, and history |
 | `voice-presence.js` | Persistent voice-channel presence helpers |
 | `package.json` | Node 20+ project metadata and static syntax-check script |
 
@@ -27,7 +27,7 @@ Requires Node.js 20 or later:
 npm run check
 ```
 
-This runs `node --check` on the four JavaScript source files. It does not start the Discord bot or log in to Discord.
+This runs `node --check` on the four JavaScript source files and verifies the CUPID module exports. It does not start the Discord bot or log in to Discord.
 
 ## Configuration
 
